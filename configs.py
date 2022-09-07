@@ -1,6 +1,6 @@
 import re
 
-##This file manages loading config files
+##This file manages loading config files for the application
 
 ##This class represents a single configuration type
 class Config:
