@@ -6,7 +6,6 @@ import re
 ##This class represents a single configuration type
 class Config:
     def __init__(self, name="", num_sets=-1, set_size=-1, num_vpages=-1, num_ppages=-1, page_size=-1, line_size=-1, write_through=False):
-        
         self.name = name
         self.num_sets = num_sets
         self.set_size = set_size
@@ -168,6 +167,7 @@ class ConfigFile:
                 num_virtual_pages = config_obj.num_vpages
                 num_physical_pages = config_obj.num_ppages
                 page_size = config_obj.page_size
+                self.page_size = page_size
                 #How many bits to index the page table?
                 self.page_table_index_bits = int(math.log2(num_virtual_pages))
                 print("Page table index bits: " + str(self.page_table_index_bits))
@@ -198,9 +198,12 @@ class ConfigFile:
                 print("L2 Cache offset bits: " + str(self.l2_cache_offset_bits))
 
         #Calculate my virtual address length
-        self.virtual_address_length = self.page_table_index_bits + self.page_table_offset_bits
-        print("Virtual address length: " + str(self.virtual_address_length))
-
+        self.virtual_address_len = self.page_table_index_bits + self.page_table_offset_bits
+        print("Virtual address length: " + str(self.virtual_address_len))
+    def pte_size(self):
+        #How many bits is a page table entry?
+        val = self.page_table_offset_bits + self.page_table_index_bits
+        return val
     def output_config(self):
         #This function produces output in the same way that the in class example did
         print(f"Data TLB Contains {self.configs['Data TLB '].num_sets} sets.")
