@@ -45,8 +45,8 @@ class Address():
         my_bin = " ".join(my_bin[i:i+4] for i in range(0, len(my_bin), 4))
         return my_bin
 
-#An entry in a TLB set
-class TLBEntry():
+#An entry address in a TLB set
+class TLBAddrEntry():
     def __init__(self, virtual_address = None, vpn = None, data = None, mapping=None):
 
         self.mapping = mapping        
@@ -124,6 +124,19 @@ class TLBEntry():
         if len(self.index_str) != self.mapping.index_bits:
             raise Exception(f"Index bits are not the correct length. Expected {self.mapping.index_bits}, got {len(self.index_str)}")
         
+#These are stored in the TLB Sets
+class TLBEntry():
+    def __init__(self, index=None, page_num=None, tag=None, valid=False, addr_entry=None):
+        self.index = index
+        self.page_num = page_num
+        self.tag = tag
+        self.valid = valid
+        self.dirty = False
+        self.used = False
+        self.data = None
+        self.mapping = None
+        self.addr_entry = addr_entry
+
 
 
 #A set in a TLB, must have a specified set_size
@@ -231,6 +244,18 @@ class TLB():
     def index_bits_len(self):
         return int(math.log2(len(self.table)))
 
+    #This function checks to see if a match is found in the TLB.
+    def search_tlbaddr_entry(self, entry):
+        for set in self.sets:
+            for tlb_entry in set.entries:
+                if tlb_entry.index_str == entry.index_str:
+                    print("Found entry that matches", entry.virtual_address.as_type(AddressType.HEX))
+                    print("\tTLB Entry:", tlb_entry.index_str)
+                    print("\tOffset:", tlb_entry.page_offset_str)
+                    print("Address:", tlb_entry.virtual_address.as_type(AddressType.HEX))
+                    return tlb_entry
+        return None
+
 
 
 
@@ -258,7 +283,7 @@ def TLBTester():
         #Add one
         mytlb.add_set(TLBSet(set_size=1, mapping=tlb_mapping))
         #Make a TLB entry
-        mytlb_entry = TLBEntry(new_address, mapping=tlb_mapping)
+        mytlb_entry = TLBAddrEntry(new_address, mapping=tlb_mapping)
         #Add the entry to the TLB
         mytlb.add_entry_to_tlb(mytlb_entry)
 
@@ -280,7 +305,7 @@ def TLBTester():
 
     #Add another address as an entry
     my_address2 = Address(addr_str="0x8FDF", addr_type=AddressType.HEX)
-    mytlb_entry2 = TLBEntry(my_address2, mapping=tlb_mapping)
+    mytlb_entry2 = TLBAddrEntry(my_address2, mapping=tlb_mapping)
     mytlb.add_entry_to_tlb(mytlb_entry2)
 
     mytlb.display_tlb()
@@ -305,7 +330,12 @@ def TLBTester():
         print("\tTag:", found_entry.tag_str, "=", int(found_entry.tag_str,2))
 
 
-
+    #Try searching for a new entry
+    my_address3 = Address(addr_str="0x8FDE", addr_type=AddressType.HEX)
+    addr_entry = TLBAddrEntry(my_address3, mapping=tlb_mapping)
+    #Required to populate object values
+    addr_entry.process_virtual_address()
+    mytlb.search_tlbaddr_entry(addr_entry)
 
 
 
