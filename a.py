@@ -3,7 +3,8 @@ from configs import ConfigFile
 from byter import Byter, Units
 from pagetable import PageTable
 
-myConfig = ConfigFile("./memhier/traceslide70.config")
+#myConfig = ConfigFile("./memhier/traceslide70.config")
+myConfig = ConfigFile("./memhier/trace.config")
 myConfig.load_file()
 myConfig.parse_lines()
 
