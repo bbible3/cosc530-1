@@ -2,6 +2,21 @@
 import math
 from enum import Enum
 from addresshelper import AddressType, Address
+from configs import ConfigFile
+
+class TLBResponseType(str, Enum):
+    ADD_SUCCESS = "add_success"
+    CANNOT_ADD_TO_SET = "cannot_add_to_set"
+    ADD_FAILED = "add_failed"
+
+    EVICT_SUCCESS = "evict_success"
+    EVICT_FAILED = "evict_failed"
+class TLBResponse():
+    def __init__(self, response_type, tlb_entry):
+        self.response_type = response_type
+        self.tlb_entry = tlb_entry
+    def print(self, indents=-0):
+        print("\t"*indents+"Cache Response: " + self.response_type + " " + self.tlb_entry.virtual_address.addr_str)
 
 #An entry address in a TLB set
 class TLBAddrEntry():
@@ -44,43 +59,34 @@ class TLBAddrEntry():
     def process_virtual_address(self):
         #Get the binary value of the virtual address
         virtual_address_bin = self.virtual_address.as_type(AddressType.BIN)[2:]
+        
+        #We may need to change this
+        addr_len = 32
 
-    
-        try:
-            #Select the page offset
-            start_range = len(virtual_address_bin) - self.mapping.page_offset_bits
-            end_range = len(virtual_address_bin)
-            self.page_offset_str = virtual_address_bin[start_range:end_range]
-            #print("Page offset:", self.page_offset)
-        except Exception as e:
-            print("Could not select page offset bits:", e)
-        try:
-            index_end_range = len(virtual_address_bin) - self.mapping.page_offset_bits
-            index_start_range = index_end_range - self.mapping.index_bits
-            self.index_str = virtual_address_bin[index_start_range:index_end_range]
-            #print("Index:", self.index)
-        except Exception as e:
-            print("Could not select index bits:", e)
-        try:
-            #Select the tag bits
-            
-            #How many bits are left?
-            bits_left = len(virtual_address_bin) - self.mapping.page_offset_bits - self.mapping.index_bits
-            #print("Bits left:", bits_left)
-            if bits_left > 0:
-                self.tag_str = str(int(virtual_address_bin[0:bits_left],2))
-        except Exception as e:
-            print("Could not select tag bits:", e)
+        #Pad if necessary
+        if len(virtual_address_bin) < addr_len:
+            virtual_address_bin = "0" * (addr_len - len(virtual_address_bin)) + virtual_address_bin
 
+        #0xc84 = 1100 1000 0100
+        n_offset_bits = self.mapping.page_offset_bits
+        n_index_bits = self.mapping.index_bits
+        n_tag_bits = addr_len - n_offset_bits - n_index_bits
+        
+        offset_end = addr_len
+        offset_start = offset_end - n_offset_bits
+        index_end = offset_start
+        index_start = index_end - n_index_bits
+        tag_end = index_start
+        tag_start = tag_end - n_tag_bits
 
-        #Test lengths
-        #print("Mapping:")
-        #self.mapping.print_self()
-        #print("Virtual address length:", len(virtual_address_bin))
-        if len(self.page_offset_str) != self.mapping.page_offset_bits:
-            raise Exception(f"Page offset bits are not the correct length. Expected {self.mapping.page_offset_bits}, got {len(self.page_offset_str)}")
-        if len(self.index_str) != self.mapping.index_bits:
-            raise Exception(f"Index bits are not the correct length. Expected {self.mapping.index_bits}, got {len(self.index_str)}")
+        tag_bits = virtual_address_bin[tag_start:tag_end]
+        index_bits = virtual_address_bin[index_start:index_end]
+        offset_bits = virtual_address_bin[offset_start:offset_end]
+
+        self.tag_str = tag_bits
+        self.page_offset_str = offset_bits
+        self.index_str = index_bits
+
         
 #These are stored in the TLB Sets
 class TLBEntry():
@@ -131,18 +137,26 @@ class TLBMapping():
         self.index_bits = index_bits
         self.tag_bits = tag_bits
     def print_self(self):
-       print(f"Offset bits: {self.page_offset_bits}, Index bits: {self.index_bits}, Tag bits: {self.tag_bits}")
+       print(f"Tag bits: {self.tag_bits} Offset bits: {self.page_offset_bits} Index bits: {self.index_bits}")
 
 #A TLB class, which stores TLB sets
 class TLB():
-    def __init__(self, page_size=-1, max_num_sets=-1):
+    def __init__(self, page_size=-1, max_num_sets=-1, max_set_size=-1):
         self.sets = []
         self.page_offset_bits = -1
         self.index_bits = -1
         self.tag_bits = -1
         self.max_num_sets = max_num_sets
+        self.max_set_size = max_set_size
         self.page_size = page_size
         self.mapping = TLBMapping()
+        self.responses = []
+
+        #Set up sets
+        if max_num_sets == -1:
+            raise Exception("Max number of sets must be specified")
+        for i in range(max_num_sets):
+            self.sets.append(TLBSet(set_size=self.max_set_size, mapping=self.mapping))
     
     #Manually add a set to the TLB
     def add_set(self, set):
@@ -159,20 +173,33 @@ class TLB():
         for set in self.sets:
             #This will return true if it was added
             if set.add_entry(entry):
+                self.responses.append(TLBResponse(TLBResponseType.ADD_SUCCESS, entry))
                 return True
-            else:
-                #THe set ight be full, can we add another set?
-                if len(self.sets) < self.max_num_sets:
-                    #Honestly not sure that TLB size should be page_size
-                    #Create new set, append entry, add new set
-                    new_set = TLBSet(self.page_size, mapping=self.mapping)
-                    new_set.add_entry(entry)
-                    self.add_set(new_set)
+        #We can't add another set, so we can't add this entry.
+        #Need to evict something
+        if self.evict(entry):
+            self.responses.append(TLBResponse(TLBResponseType.EVICT_SUCCESS, entry))
+            #This is recursive and scary
+            return self.add_entry_to_tlb(entry)
+        #raise Exception("TLB is full")
+        return False
+    
+    #Evict an entry from the TLB
+    def evict(self, via_entry):
+        for set in self.sets:
+            for entry in set.entries:
+                #If the entry hasn't been set up, ignore it
+                if entry.index_str == -1:
+                    continue
+                
+                #Do these entries have the same index bit?
+                if entry.index_str == via_entry.index_str:
+                    #If so, evict it
+                    #print(f"Match found, evicting {entry.index_str} to add {via_entry.index_str}")
+                    #print(f"Address {entry.virtual_address.addr_str} evicted for {via_entry.virtual_address.addr_str}")
+                    set.entries.remove(entry)
                     return True
-                else:
-                    #We can't add another set, so we can't add this entry
-                    raise Exception("TLB is full")
-                    return False
+                
     
     #Search the TLB for a given Address
     def locate_address(self, address):
@@ -221,81 +248,56 @@ class TLB():
 #Tester Class#
 ##############
 def TLBTester():
+    myConfig = ConfigFile("./memhier/trace.config")
+    myConfig.load_file()
+    myConfig.parse_lines()
+    myConfig.process_config()
 
+
+    print("Num configs = ", len(myConfig.configs))
+
+    #Get values from config
+    config_page_size = myConfig.configs['Page Table '].page_size
+   
+
+
+    config_set_size = myConfig.configs['Data TLB '].set_size
+    config_num_sets = myConfig.configs['Data TLB '].num_sets
+
+    config_page_table_index_bits = myConfig.page_table_index_bits
+    config_page_table_offset_bits = myConfig.page_table_offset_bits
+    config_tlb_index_bits = myConfig.tlb_bits
+
+    print("Page table offset bits:", config_page_table_offset_bits)
+    print("TLB index bits:", config_tlb_index_bits)
+ 
     #Init TLB
-    mytlb = TLB(page_size = 512, max_num_sets = 64)
+    mytlb = TLB(page_size = config_page_size, max_num_sets = config_num_sets, max_set_size = config_set_size)
     #Setup mapping
 
-    tlb_mapping = TLBMapping(page_offset_bits=9, index_bits=6)
+    tlb_mapping = TLBMapping(page_offset_bits=config_page_table_offset_bits, index_bits=config_tlb_index_bits)
     mytlb.mapping = tlb_mapping
 
-    #Create an address t test
-    new_address = Address(addr_str="0xABC1", addr_type=AddressType.HEX)
-    print("new_address type:", new_address.addr_type)
-    print("new_address value:", new_address.as_type(AddressType.HEX))
-    print("new_address value:", new_address.as_type(AddressType.BIN))
-    print("new_address as formatted binary:", new_address.bin_formatted())
 
-    if len(mytlb.sets) is 0:
-        #print("No sets in TLB")
-        #Add one
-        mytlb.add_set(TLBSet(set_size=1, mapping=tlb_mapping))
-        #Make a TLB entry
-        mytlb_entry = TLBAddrEntry(new_address, mapping=tlb_mapping)
-        #Add the entry to the TLB
-        mytlb.add_entry_to_tlb(mytlb_entry)
+    my_address = Address(addr_str="0x0c84", addr_type=AddressType.HEX)
+    mytlb_entry = TLBAddrEntry(my_address, mapping=tlb_mapping)
+    mytlb_entry.process_virtual_address()
+    mytlb.add_entry_to_tlb(mytlb_entry)
 
-    #Output the TLB
-    #mytlb.display_tlb()
+    my_address = Address(addr_str="0x0c85", addr_type=AddressType.HEX)
+    mytlb_entry = TLBAddrEntry(my_address, mapping=tlb_mapping)
+    mytlb_entry.process_virtual_address()
+    mytlb.add_entry_to_tlb(mytlb_entry)
 
-    #Test the address
-    # try_find = mytlb.locate_address(new_address)
-    # if try_find is not None:
-    #     print("Found address in TLB")
-    #     print("Set:", try_find[0])
-    #     print("Entry:", try_find[1])
-    # else:
-    #     print("Address not found in TLB")
-    #Assuming we have only added one value, should ouput: Set 0 Entry 0
+    my_address = Address(addr_str="0x0c86", addr_type=AddressType.HEX)
+    mytlb_entry = TLBAddrEntry(my_address, mapping=tlb_mapping)
+    mytlb_entry.process_virtual_address()
+    mytlb.add_entry_to_tlb(mytlb_entry)
 
-    #At this point, we expect to see Set 0 and Entry 0, "Found address in TLB"
-    #Then, we search for it... set 0 entry 0
+    for response in mytlb.responses:
+        response.print(indents=1)
 
-    #Add another address as an entry
-    my_address2 = Address(addr_str="0x8FDF", addr_type=AddressType.HEX)
-    mytlb_entry2 = TLBAddrEntry(my_address2, mapping=tlb_mapping)
-    mytlb.add_entry_to_tlb(mytlb_entry2)
-
-    mytlb.display_tlb()
-
-    try_find = mytlb.locate_address(my_address2)
-    if try_find is not None:
-        print("Found address in TLB")
-        print("Set:", try_find[0])
-        print("Entry:", try_find[1])
-
-    #What data do we have in try_find?
-    if try_find[2]:
-        found_entry = try_find[2]
-        print("Found entry.")
-        print("Virtual address:", found_entry.virtual_address.as_type(AddressType.HEX))
-        print("As formatted binary:", found_entry.virtual_address.bin_formatted())
-        #Try to process
-        print("Trying to process entry...")
-        found_entry.process_virtual_address()
-        print("\tOffset:", found_entry.page_offset_str,"=", int(found_entry.page_offset_str,2))
-        print("\tIndex:", found_entry.index_str, "=", int(found_entry.index_str,2))
-        print("\tTag:", found_entry.tag_str, "=", int(found_entry.tag_str,2))
-
-
-    #Try searching for a new entry
-    my_address3 = Address(addr_str="0x8FDE", addr_type=AddressType.HEX)
-    addr_entry = TLBAddrEntry(my_address3, mapping=tlb_mapping)
-    #Required to populate object values
-    addr_entry.process_virtual_address()
-    mytlb.search_tlbaddr_entry(addr_entry)
-
-
+  
 
 print("TLB Tester")
 TLBTester()

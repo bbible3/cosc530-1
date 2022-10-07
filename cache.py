@@ -42,6 +42,7 @@ class CacheBlock():
         
         self.data = []
         self.block_size = block_size
+        self.block_index = None
         
         if self.block_size is None:
             #Raise an exception
@@ -63,6 +64,7 @@ class CacheSet():
     def __init__(self, set_size=None):
         self.set_size = set_size
         self.set = []
+        self.set_index = None
         if self.set_size is None:
             raise Exception("Set size must be specified")
 
@@ -70,7 +72,9 @@ class CacheSet():
     def add_block(self, block):
         if len(self.set) < self.set_size:
             self.set.append(block)
+            return True
         else:
+            return False
             raise Exception("Set is full")
 
     #Create a new, empty block and add it to the set. Return it.
@@ -86,9 +90,10 @@ class CacheSet():
 
     #Returns true if we cannot add more blocks to this set 
     def is_full(self):
-        for block in self.set:
-            if not block.is_full():
-                return False
+        if len(self.set) < self.set_size:
+            return False
+        return True
+
 
     #Returns the first block in the set that is not full
     #If all blocks in set are full, try to create a new block
@@ -110,7 +115,7 @@ class Cache():
             raise TypeError("Cache's config must be of type Config")
         
         self.config = config
-        self.sets = []
+        self.sets = {}
         self.cache_responses = []
 
         self.child_cache = None
@@ -141,44 +146,29 @@ class Cache():
         child.parent_cache = self
 
     #Add a new set to the cache if possible
-    def add_set(self):
+    def add_set(self, set_index):
         if len(self.sets) < self.num_sets:
-            self.sets.append(CacheSet(self.set_size))
+            self.sets[set_index] = CacheSet(self.set_size)
             return True
         else:
             raise Exception("Tried to add a set when cache is full")
 
-    #Add a block to any set that has room
-    def add_to_any_set(self, block):
-        for set in self.sets:
-            if set.len() < self.set_size:
-                set.add_block(block)
-                return True
-        return False
 
-    #Is there a set that has room for a new entry? return True or False
-    def is_full(self):
-        if self.first_available_set() is None:
-            return True
-        return False
+    def is_set_full(self, set_index):
+        #Does an entry in dict self.sets with key set_index exist?
+        if set_index not in self.sets:
+            return False
+        return self.sets[set_index].is_full()
 
-    #Return the first set that has room for a new entry, or return None
-    def first_available_set(self):
-        for set in self.sets:
-            if set.is_full == False:
-                return set
-        #Can we add a new set?
-        if self.add_new_set():
-            return self.sets[-1]
-        return None
+    def get_or_create_set(self, set_index):
+        #Does the set exist?
+        print("Getting or creating set {}".format(set_index))
+        if set_index not in self.sets:
+            #Create the set
+            self.sets[set_index] = CacheSet(self.set_size)
+        return self.sets[set_index]
+
     
-    #Create a new set and add it to the cache if possible
-    def add_new_set(self):
-        if len(self.sets) < self.num_sets:
-            self.sets.append(CacheSet(self.set_size))
-            return True
-        return False
-
     #A read operation
     def read(self, address):
         #Make sure address is of type Address
@@ -191,14 +181,17 @@ class Cache():
         #At this point, mapping.tag, mapping.index, and mapping.offset are all ints that represent the tag, index, and offset of the address
         #We want to check if the index is in the cache
         #If it is, we want to check if the tag is in the set
-        for set in self.sets:
+        for set in self.sets.values():
             for block in set.set:
-                for datum in block.data:
-                    if datum.tag == mapping.tag:
-                        #Cache hit - this address is in the cache.
-                        #HIT
-                        self.cache_responses.append(CacheResponse(CacheResponseType.READ_HIT, address, from_cache=self.cache_type))
-                        return True
+                #Does the index match?
+                if block.block_index == mapping.index:
+                    for datum in block.data:
+                        #Does the tag match?
+                        if datum.tag == mapping.tag:
+                            #Cache hit - this address is in the cache.
+                            #HIT
+                            self.cache_responses.append(CacheResponse(CacheResponseType.READ_HIT, address, from_cache=self.cache_type))
+                            return True
         #Cache miss - the address is no tin this level of cache.
         cache_response = CacheResponse(CacheResponseType.READ_MISS, address, from_cache=self.cache_type)
         self.cache_responses.append(cache_response)
@@ -225,21 +218,29 @@ class Cache():
     #Different from write - this is called by write AND read.
     def save(self, address):
 
+        print("Saving address", address.addr_str)
         #Make sure address is of type Address
         if not isinstance(address, Address):
             raise TypeError("Address must be of type Address")
         
+  
         #Map the address using AddressMapping to get the offset, index, and tag
-        mapping = address.mapping(self.config.cache_offset_bits, self.config.cache_index_bits)
+        mapping = address.mapping(n_offset=self.config.cache_offset_bits, n_index=self.config.cache_index_bits)
+        mapping.print()
 
-        #To implement later#
-        if self.is_full():
-                #Cache is full, evict a block
-                raise Exception("Error on read: Cache is full, evict a block.")
-                pass
-            
         #print("Trying to add datum")
-        which_set = self.first_available_set()
+
+        #Setup which_set
+        which_set = None
+        #Direct mapping
+        if (self.num_sets == 1):
+            which_set = self.first_available_set()
+        elif (self.num_sets > 1):
+            if self.is_set_full(mapping.index):
+                which_set = None
+            else:
+                which_set = self.get_or_create_set(mapping.index)
+                #Need to evict...
 
         #No set has room, so we need to evict
         if which_set is None:
@@ -251,7 +252,9 @@ class Cache():
         if which_block.is_full() != True:
             #We have a block that has room for a new datum, add it
             which_block.add_datum(CacheDatum(mapping.tag, address))
-            
+            #Change this later
+            which_block.block_index = mapping.index
+
             cache_response = CacheResponse(CacheResponseType.SAVE_SUCCESS, address, from_cache=self.cache_type)
             self.cache_responses.append(cache_response)
             return True
@@ -267,16 +270,20 @@ def cache_tester():
     myConfig.parse_lines()
     myConfig.process_config()
 
+
     print("Num configs = ", len(myConfig.configs))
     for config in myConfig.configs:
         #Print the name of the config
         print("Config name = ", config)
+        print("\tAssociativity/num_sets = ", myConfig.configs[config].num_sets)
 
     dc_config = myConfig.configs['Data Cache ']
     dc_config.cache_offset_bits = myConfig.cache_offset_bits
     dc_config.cache_index_bits = myConfig.cache_index_bits
     dc_cache = Cache(dc_config)
     dc_cache.cache_type = CacheType.DATA
+    print("Index bits = ", dc_config.cache_index_bits)
+    print("Offset bits = ", dc_config.cache_offset_bits)
 
     l2_config = myConfig.configs['L2 Cache ']
     l2_config.cache_offset_bits = myConfig.cache_offset_bits
@@ -287,8 +294,12 @@ def cache_tester():
 
     dc_cache.set_child(l2_cache)
     
-    dc_cache.read(Address("0xFEEDBEEF"))
-    dc_cache.read(Address("0xFEEDBEEF"))
+    #dc_cache.read(Address("0xFEEDBEEF"))
+    #dc_cache.read(Address("0xFEEDBEEF"))
+    print("Predicted virtual address length = ", dc_config.max_ref_addr_len)
+    addr = Address("0xc84")
+    print(addr.bin_formatted())
+    dc_cache.read(addr)
 
     print("Responses for data cache:")
     for response in dc_cache.cache_responses:

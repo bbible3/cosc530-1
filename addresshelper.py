@@ -15,6 +15,8 @@ class Mapping():
         self.offset = offset
         self.index = index
         self.tag = tag
+    def print(self):
+        print(f"Tag: {self.tag}, Index: {self.index}, Offset: {self.offset}")
 class Address():
     def __init__(self, addr_str="0xFEEDBEEF", addr_type=AddressType.NULLTYPE, min_len=4):
         self.min_len = min_len
@@ -50,15 +52,19 @@ class Address():
 
     def mapping(self, n_offset=None, n_index=None, n_tag=None):
 
-
+        max_addr_len = 32
         if n_offset is None or n_index is None:
             raise Exception("Must specify n_offset and n_index")
         
         #Get my binary representation
         my_bin = self.as_type(AddressType.BIN)
         my_bin = my_bin[2:]
+
+        #Pad if necessary
         addr_bits = len(my_bin)
- 
+        if (addr_bits < max_addr_len):
+            my_bin = "0" * (max_addr_len - addr_bits) + my_bin
+        addr_bits = len(my_bin)
         
         n_offset_int = int(n_offset)
         n_index_int = int(n_index)
@@ -69,20 +75,24 @@ class Address():
  
 
 
+        print("Tag of length", n_tag_int)
 
-
-
-        n_tag_res = my_bin[0:n_tag]
+        n_tag_res = my_bin[0:n_tag_int]
+        print("Got tag", n_tag_res)
         
-        n_index_end = n_tag_int + n_offset_int
+        n_index_end = n_tag_int + n_index_int
         n_index_res = my_bin[n_tag_int:n_index_end]
 
-        n_offset_start = n_tag_int + n_index_int
-        n_offset_res = my_bin[n_offset_start:]
+        n_offset_start = n_index_end
+        n_offset_res = my_bin[n_offset_start:addr_bits]
 
+        #print(f"\tTag 0:{n_tag_int} = {n_tag_res}")
+        #print(f"\tIndex {n_tag_int}:{n_index_end} = {n_index_res}")
+        #print(f"\tOffset {n_index_end}:{addr_bits} = {n_offset_res}")
         bin_int_tag = int(n_tag_res, base=2)
         bin_int_index = int(n_index_res, base=2)
         bin_int_offset = int(n_offset_res, base=2)
+        
         
         output_mapping = Mapping(bin_int_offset, bin_int_index, bin_int_tag)
         return output_mapping

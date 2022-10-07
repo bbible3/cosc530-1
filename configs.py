@@ -34,6 +34,9 @@ class Config:
         self.use_lru = True
         self.page_fault_action = "invalidate"
 
+        self.page_table_index_bits = -1
+        self.page_table_offset_bits = -1
+
     def get_config(self):
         return self
 
@@ -197,6 +200,7 @@ class ConfigFile:
             if config == "Data Cache ":
                 num_sets = config_obj.num_sets
                 set_size = config_obj.set_size
+
                 line_size = config_obj.line_size
                 #How many bits to index the cache?
                 self.cache_index_bits = int(math.log2(num_sets))
@@ -208,6 +212,8 @@ class ConfigFile:
             if config == "L2 Cache ":
                 num_sets = config_obj.num_sets
                 set_size = config_obj.set_size
+                
+
                 line_size = config_obj.line_size
                 #How many bits to index the cache?
                 self.l2_cache_index_bits = int(math.log2(num_sets))
