@@ -1,49 +1,7 @@
 
 import math
 from enum import Enum
-class AddressType(int, Enum):
-    #Define if the address is hex, binary, or decimal
-    HEX = 16
-    BIN = 2
-    DEC = 10
-    NULLTYPE = 0
-
-#This class represents a single address, able to be displayed in different formats
-#Must define address as a string, type as an AddressType
-#min_len specifies the minimum length of the address, in bits - if the address is shorter, it will be padded with zeros
-class Address():
-    def __init__(self, addr_str="0xFEEDBEEF", addr_type=AddressType.NULLTYPE, min_len=4):
-        self.min_len = min_len
-        if addr_str is not None and addr_type is not None:
-            self.addr_str = addr_str
-            self.addr_type = addr_type
-            self.addr_int = int(addr_str, base=int(self.addr_type))
-
-    #Return the address as a given type as specified by the AddressType enum
-    def as_type(self, to_type):
-        if to_type == AddressType.HEX:
-            return hex(self.addr_int)
-        elif to_type == AddressType.BIN:
-            return bin(self.addr_int)
-        elif to_type == AddressType.DEC:
-            return str(self.addr_int)
-    
-    #Return the address as a string with proper formatting and separation
-    def bin_formatted(self):
-        my_bin = bin(self.addr_int)
-        my_bin = my_bin[2:]
-
-        if len(my_bin)%4 is not 0:
-            #We need to pad the string with zeros
-            my_bin = "0" * (4 - (len(my_bin)%4)) + my_bin
-        
-        #Pad if necessary
-        if len(my_bin) < self.min_len:
-            my_bin = "0" * (self.min_len - len(my_bin)) + my_bin
-        
-        #Split every 4
-        my_bin = " ".join(my_bin[i:i+4] for i in range(0, len(my_bin), 4))
-        return my_bin
+from addresshelper import AddressType, Address
 
 #An entry address in a TLB set
 class TLBAddrEntry():

@@ -1,3 +1,93 @@
+from enum import Enum
+from re import T
+class AddressType(int, Enum):
+    #Define if the address is hex, binary, or decimal
+    HEX = 16
+    BIN = 2
+    DEC = 10
+    NULLTYPE = 0
+
+#This class represents a single address, able to be displayed in different formats
+#Must define address as a string, type as an AddressType
+#min_len specifies the minimum length of the address, in bits - if the address is shorter, it will be padded with zeros
+class Mapping():
+    def __init__(self, offset, index, tag):
+        self.offset = offset
+        self.index = index
+        self.tag = tag
+class Address():
+    def __init__(self, addr_str="0xFEEDBEEF", addr_type=AddressType.NULLTYPE, min_len=4):
+        self.min_len = min_len
+        if addr_str is not None and addr_type is not None:
+            self.addr_str = addr_str
+            self.addr_type = addr_type
+            self.addr_int = int(addr_str, base=int(self.addr_type))
+    #Return the address as a given type as specified by the AddressType enum
+    def as_type(self, to_type):
+        if to_type == AddressType.HEX:
+            return hex(self.addr_int)
+        elif to_type == AddressType.BIN:
+            return bin(self.addr_int)
+        elif to_type == AddressType.DEC:
+            return str(self.addr_int)
+    
+    #Return the address as a string with proper formatting and separation
+    def bin_formatted(self):
+        my_bin = bin(self.addr_int)
+        my_bin = my_bin[2:]
+
+        if len(my_bin)%4 != 0:
+            #We need to pad the string with zeros
+            my_bin = "0" * (4 - (len(my_bin)%4)) + my_bin
+        
+        #Pad if necessary
+        if len(my_bin) < self.min_len:
+            my_bin = "0" * (self.min_len - len(my_bin)) + my_bin
+        
+        #Split every 4
+        my_bin = " ".join(my_bin[i:i+4] for i in range(0, len(my_bin), 4))
+        return my_bin
+
+    def mapping(self, n_offset=None, n_index=None, n_tag=None):
+
+
+        if n_offset is None or n_index is None:
+            raise Exception("Must specify n_offset and n_index")
+        
+        #Get my binary representation
+        my_bin = self.as_type(AddressType.BIN)
+        my_bin = my_bin[2:]
+        addr_bits = len(my_bin)
+ 
+        
+        n_offset_int = int(n_offset)
+        n_index_int = int(n_index)
+        if n_tag is None:
+            n_tag_int = addr_bits - n_offset_int - n_index_int
+        else:
+            n_tag_int = int(n_tag)
+ 
+
+
+
+
+
+        n_tag_res = my_bin[0:n_tag]
+        
+        n_index_end = n_tag_int + n_offset_int
+        n_index_res = my_bin[n_tag_int:n_index_end]
+
+        n_offset_start = n_tag_int + n_index_int
+        n_offset_res = my_bin[n_offset_start:]
+
+        bin_int_tag = int(n_tag_res, base=2)
+        bin_int_index = int(n_index_res, base=2)
+        bin_int_offset = int(n_offset_res, base=2)
+        
+        output_mapping = Mapping(bin_int_offset, bin_int_index, bin_int_tag)
+        return output_mapping
+
+
 class AddrHelper():
 
     def __init__(self, tag=4, index=4, offset=4):
@@ -53,4 +143,4 @@ class AddrHelper():
 
 #AddrHelper(offset=4,index=6,tag=6)
 #AddrHelper(offset=9,index=6,tag=6).hexaddr()
-AddrHelper().bin()
+#AddrHelper().bin()
