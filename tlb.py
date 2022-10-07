@@ -202,17 +202,31 @@ class TLB():
                 
     
     #Search the TLB for a given Address
-    def locate_address(self, address):
-        #Is the address a valid address?
-        if not isinstance(address, Address):
-            raise Exception("Address must be of type Address")
+    def locate_address(self, address=None, mapping=None):
+
+        #Make a TLBEntry from the address
+        entry = TLBAddrEntry(virtual_address=address, mapping=mapping)
+        #Process it
+        entry.process_virtual_address()
         
-        #Try the address in the TLB, if it exists return it in (set, entry_index, TLBEntry) format
-        for i,set in enumerate(self.sets):
-            for j,entry in enumerate(set.entries):
-                if entry.virtual_address == address:
-                    return (i, j, entry)
-        return None
+        if entry.index_str == -1:
+            raise Exception("Address must be processed before it can be located")
+
+        if mapping is None:
+            raise Exception("Mapping must be specified")
+
+        locate_addr_index = entry.index_str
+        locate_addr_tag = entry.tag_str
+
+        for set in self.sets:
+            for entry in set.entries:
+                if entry.index_str == locate_addr_index:
+                    print("Found index match")
+                    #Index matches, check tag
+                    if entry.tag_str == locate_addr_tag:
+                        print("Found tag match")
+                        #Tag matches, we found it
+                        return entry
 
     def display_tlb(self):
         for set in self.sets:
@@ -297,7 +311,7 @@ def TLBTester():
     for response in mytlb.responses:
         response.print(indents=1)
 
-  
+    mytlb.locate_address(address=my_address, mapping=tlb_mapping)
 
 print("TLB Tester")
 TLBTester()
