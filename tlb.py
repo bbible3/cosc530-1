@@ -311,7 +311,19 @@ def TLBTester():
     for response in mytlb.responses:
         response.print(indents=1)
 
+    my_address = Address(addr_str="0x0c86", addr_type=AddressType.HEX)
+    mytlb_entry = TLBAddrEntry(my_address, mapping=tlb_mapping)
+    mytlb_entry.process_virtual_address()
+    print("Tag:", mytlb_entry.tag_str)
+    print("Index:", mytlb_entry.index_str)
     mytlb.locate_address(address=my_address, mapping=tlb_mapping)
+
+
+    my_address = Address(addr_str="0x0c84", addr_type=AddressType.HEX)
+    mytlb.locate_address(address=my_address, mapping=tlb_mapping)
+    mytlb_entry.process_virtual_address()
+    print("Tag:", mytlb_entry.tag_str)
+    print("Index:", mytlb_entry.index_str)
 
 print("TLB Tester")
 TLBTester()
