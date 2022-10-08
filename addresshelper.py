@@ -151,6 +151,8 @@ class AddrHelper():
             print("Index: ", index_bits, "(", index_dec, ")")
             print("Offset: ", offset_bits, "(", offset_dec, ")")
 
+
+
 #AddrHelper(offset=4,index=6,tag=6)
 #AddrHelper(offset=9,index=6,tag=6).hexaddr()
 #AddrHelper().bin()

@@ -11,12 +11,16 @@ class TLBResponseType(str, Enum):
 
     EVICT_SUCCESS = "evict_success"
     EVICT_FAILED = "evict_failed"
+    EVICTING = "evicting"
 class TLBResponse():
-    def __init__(self, response_type, tlb_entry):
+    def __init__(self, response_type, tlb_entry, extra_data=None):
         self.response_type = response_type
         self.tlb_entry = tlb_entry
+        self.extra_data = extra_data
     def print(self, indents=-0):
         print("\t"*indents+"Cache Response: " + self.response_type + " " + self.tlb_entry.virtual_address.addr_str)
+        if self.extra_data is not None:
+            print("\tExtra Data: " + self.extra_data)
 
 #An entry address in a TLB set
 class TLBAddrEntry():
@@ -26,6 +30,7 @@ class TLBAddrEntry():
         self.page_offset_str = -1
         self.index_str = -1
         self.tag_str = -1
+        self.pfn = None
         #If our virtual_address is invalid, except
         if not isinstance(virtual_address, Address):
             raise Exception("virtual_address must be of type Address")
@@ -197,6 +202,9 @@ class TLB():
                     #If so, evict it
                     #print(f"Match found, evicting {entry.index_str} to add {via_entry.index_str}")
                     #print(f"Address {entry.virtual_address.addr_str} evicted for {via_entry.virtual_address.addr_str}")
+                    
+                    self.responses.append(TLBResponse(TLBResponseType.EVICTING, via_entry, extra_data=entry.virtual_address.addr_str))
+
                     set.entries.remove(entry)
                     return True
                 
@@ -257,6 +265,49 @@ class TLB():
 
 
 
+def EntryGenerator(like, change_bits=None, change_by=None):
+    #Get the information about the entry
+    like_addr = like.virtual_address
+    if like.index_str == -1:
+        like.process_virtual_address()
+    if change_bits == "tag":
+        like_tag = like.tag_str
+        like_tag_bin = "0b" + like_tag
+        like_tag_int = int(like_tag_bin, 2)
+        like_tag_int += change_by
+        like_tag_bin = bin(like_tag_int)
+        like_tag = like_tag_bin[2:]
+    else:
+        like_tag = like.tag_str
+    if change_bits == "index":
+        like_index = like.index_str
+        like_index_bin = "0b" + like_index
+        like_index_int = int(like_index_bin, 2)
+        like_index_int += change_by
+        like_index_bin = bin(like_index_int)
+        like_index = like_index_bin[2:]
+    else:
+        like_index = like.index_str
+    if change_bits == "offset":
+        like_offset = like.page_offset_str
+        like_offset_bin = "0b" + like_offset
+        like_offset_int = int(like_offset_bin, 2)
+        like_offset_int += change_by
+        like_offset_bin = bin(like_offset_int)
+        like_offset = like_offset_bin[2:]
+    else:
+        like_offset = like.page_offset_str
+    n_like_tag = len(like_tag)
+    n_like_index = len(like_index)
+    n_like_offset = len(like_offset)
+
+    new_tag = like_tag
+    new_index = like_index
+    new_offset = like_offset
+    new_bin = "0b" + new_tag + new_index + new_offset
+    new_hex = hex(int(new_bin, 2))
+    print("New hex:", new_hex)
+    return str(new_hex)
 
 
 #Tester Class#
@@ -305,25 +356,38 @@ def TLBTester():
 
     my_address = Address(addr_str="0x0c86", addr_type=AddressType.HEX)
     mytlb_entry = TLBAddrEntry(my_address, mapping=tlb_mapping)
+    mytlb_entry.pfn = "1000"
     mytlb_entry.process_virtual_address()
     mytlb.add_entry_to_tlb(mytlb_entry)
 
     for response in mytlb.responses:
         response.print(indents=1)
 
-    my_address = Address(addr_str="0x0c86", addr_type=AddressType.HEX)
-    mytlb_entry = TLBAddrEntry(my_address, mapping=tlb_mapping)
-    mytlb_entry.process_virtual_address()
-    print("Tag:", mytlb_entry.tag_str)
-    print("Index:", mytlb_entry.index_str)
-    mytlb.locate_address(address=my_address, mapping=tlb_mapping)
+    # my_address = Address(addr_str="0x0c86", addr_type=AddressType.HEX)
+    # mytlb_entry = TLBAddrEntry(my_address, mapping=tlb_mapping)
+    # mytlb_entry.process_virtual_address()
+    # print("Tag:", mytlb_entry.tag_str)
+    # print("Index:", mytlb_entry.index_str)
+    # mytlb.locate_address(address=my_address, mapping=tlb_mapping)
 
 
-    my_address = Address(addr_str="0x0c84", addr_type=AddressType.HEX)
-    mytlb.locate_address(address=my_address, mapping=tlb_mapping)
-    mytlb_entry.process_virtual_address()
-    print("Tag:", mytlb_entry.tag_str)
-    print("Index:", mytlb_entry.index_str)
+    #print("Trying to make an entry like 0x0c86 with incremented index")
+    #EntryGenerator(mytlb_entry, change_bits="index", change_by=1)
+    #0xd86
+    new_hex = EntryGenerator(mytlb_entry, change_bits="offset", change_by=1)
+    my_address = Address(addr_str=new_hex, addr_type=AddressType.HEX)
+    found_entry = mytlb.locate_address(address=my_address, mapping=tlb_mapping)
+    if found_entry != None:
+        print(found_entry.virtual_address.addr_str, "found in TLB")
+        print(f"The tag is {found_entry.tag_str}, the index is {found_entry.index_str}, and the offset is {found_entry.page_offset_str}")
+        #In a virtual address, everything that is not the offset is the VPN. The VPN is the tag and index combined.
+        
+        #Ensure that found_entry has a valid PFN
+        if found_entry.pfn == None:
+            raise Exception("PFN is None for found_entry=", found_entry.virtual_address.addr_str)
+        physical_address = "0b" + found_entry.pfn + found_entry.page_offset_str
+        print("Physical address:", hex(int(physical_address, 2)))
+
 
 print("TLB Tester")
 TLBTester()
