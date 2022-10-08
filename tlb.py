@@ -376,6 +376,7 @@ def TLBTester():
     #0xd86
     new_hex = EntryGenerator(mytlb_entry, change_bits="offset", change_by=1)
     my_address = Address(addr_str=new_hex, addr_type=AddressType.HEX)
+    print("Running a locate on the new address", new_hex)
     found_entry = mytlb.locate_address(address=my_address, mapping=tlb_mapping)
     if found_entry != None:
         print(found_entry.virtual_address.addr_str, "found in TLB")
@@ -388,6 +389,17 @@ def TLBTester():
         physical_address = "0b" + found_entry.pfn + found_entry.page_offset_str
         print("Physical address:", hex(int(physical_address, 2)))
 
-
+        test_address = Address(addr_str="0xc84", addr_type=AddressType.HEX)
+        test_entry = TLBAddrEntry(test_address, mapping=tlb_mapping)
+        test_entry.process_virtual_address()
+        test_tag = test_entry.tag_str
+        test_index = test_entry.index_str
+        test_offset = test_entry.page_offset_str
+        test_tag_int = int(test_tag, 2)
+        test_index_int = int(test_index, 2)
+        test_offset_int = int(test_offset, 2)
+        print("Test tag:", hex(test_tag_int))
+        print("Test index:", hex(test_index_int))
+        print("Test offset:", hex(test_offset_int))
 print("TLB Tester")
 TLBTester()
