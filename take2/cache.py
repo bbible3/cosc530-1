@@ -10,6 +10,8 @@ class CacheLogType(str, Enum):
     WRITE_MISS = "Write Miss"
     CREATED_VPN_TO_PFN = "Created VPN to PFN mapping"
     PT_FULL = "Page Table Full"
+    EVICT_SUCCESS = "Evict Success"
+    EVICT_FAIL = "Evict Fail"
 class CacheLogAction(str, Enum):
     ATTEMPT_READ = "Attempt Read"
     CONTINUE_LOWER = "Continue to Lower Cache"
@@ -66,6 +68,18 @@ class Set():
             self.blocks.append(block)
         else:
             return False
+    def evict_block(self):
+        #Approximate LRU, make this better later
+        #Just remove block at index 0
+        num_blocks = len(self.blocks)
+        new_blocks = self.blocks[1:]
+        self.blocks = new_blocks
+        num_blocks_new = len(self.blocks)
+        if num_blocks_new == num_blocks - 1:
+            return True
+        else:
+            return False
+    
 
 class Cache():
     def __init__(self, config=None, cache_type=None):
@@ -184,6 +198,7 @@ class Cache():
                 return False
             else:
                 return True
+        
 
     def translate_addr(self, addr_to_translate=None, pfn=None):
         self.addr_to_translate = addr_to_translate
@@ -288,6 +303,14 @@ class MemHier():
 
                         log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.CREATED_VPN_TO_PFN, result=CacheLogAction.TRY_PT_AGAIN)
                         self.cache_log.add(log_result)
+
+                        #Update TLB
+                        dtlb.save(read_addr, new_block)
+                        #Try the page table read again
+                        page_table_read = page_table.read(read_addr_str)
+                        print("New page table read: ", page_table_read)
+                        #Currently, this is showing up as None, why?
+
                     elif num_blocks_page_table < self.config.pt_num_vpages:
                         #What is the most recently allocated PFN?
                         most_recent_pfn = page_table_set.blocks[-1].data.pfn
@@ -305,10 +328,36 @@ class MemHier():
                         page_table.save(read_addr, new_block)
 
                         log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.CREATED_VPN_TO_PFN, result=CacheLogAction.TRY_PT_AGAIN)
+                        self.cache_log.add(log_result)
+
+                        #Update TLB
+                        dtlb.save(read_addr, new_block)
+
+                        #Try the page table read again
+                        page_table_read = page_table.read(read_addr_str)
+
                     else:
-                        log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.PAGE_TABLE_FULL, result=CacheLogAction.PT_EVICT)
+                        log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.PT_FULL, result=CacheLogAction.PT_EVICT)
                         self.cache_log.add(log_result)
                         #We need to evict a block from the page table
+                        eviction_result = page_table_set.evict()
+                        if eviction_result == True:
+                            #Eviction succeeded
+                            log_result = CacheLogItem(action=CacheLogAction.PT_EVICT, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.EVICT_SUCCESS, result=CacheLogAction.TRY_PT_AGAIN)
+                            self.cache_log.add(log_result)
+                        else:
+                            #Eviction failed
+                            log_result = CacheLogItem(action=CacheLogAction.PT_EVICT, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.EVICT_FAIL, result=CacheLogAction.TRY_PT_AGAIN)
+                            self.cache_log.add(log_result)
+
+                            raise ValueError("Eviction failed")
+                if page_table_read is None:
+                    #For some reason the page_table_read is still None. Fault.
+                    raise ValueError("Page table read is still None")
+                print("Page table read: ", page_table_read)
+                        
+
+
 
                     
 def TestCache():
