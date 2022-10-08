@@ -142,10 +142,11 @@ class Cache():
             elif len(self.sets) == 0:
                 #Setup the page table
                 self.sets[0] = Set(self.set_size)
-
+            print("Looking in page table for vpn: " + str(addr_bits.vpn))
             #We should have one set at this point
             for block in self.sets[0].blocks:
                 if block.data.vpn == addr_bits.vpn:
+                    print("Found match with pfn: " + str(block.data.pfn))
                     return block.data.pfn
             #We didn't find the block, return None
             return None
@@ -234,7 +235,7 @@ class MemHier():
         if not read_addr_str.startswith("0x"):
             raise ValueError("Address must be a hex string")
         #Create an Address object
-        read_addr = Address(read_addr_str)
+        read_addr = Address(read_addr_str, is_virtual=True)
 
         #Are we using a TLB?
         if self.config.use_tlb == True:
@@ -253,12 +254,16 @@ class MemHier():
                 page_table_read = page_table.read(read_addr_str)
                 print("Page table read: ", page_table_read)
                 if page_table_read is not None:
-                    #Success! We found the address in the page table
-                    #We need to actually properly handle the read/write policy stuff here
+                    #Success! We found the physical address in the page table
                     log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.READ_HIT, result=CacheLogAction.CONTINUE_LOWER)
                     self.cache_log.add(log_result)
-                    pass
+                    #Translate the address
+                    translated_addr = page_table.translate_addr(addr_to_translate=read_addr, pfn=page_table_read)
+                    return translated_addr
                 else:
+                    #We didn't find the physical address in the page table. 
+                    #We need to translate the virtual address to a physical address
+                    
                     log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.READ_MISS, result=CacheLogAction.CONTINUE_LOWER)
                     self.cache_log.add(log_result)
 def TestCache():
@@ -301,10 +306,23 @@ def TestCache():
     print("Manual Save response:", response)
 
     test_read = memhier.read("0xc84")
+    test_read_2 = memhier.read("0xdead")
+
+    test_addr1 = Address("0xc84")
+    test_addr2 = Address("0xdead")
+    
+    test_addr1_bits = test_addr1.get_bits(config, CacheType.DTLB)
+    test_addr2_bits = test_addr2.get_bits(config, CacheType.DTLB)
+
+    test_addr1_vpn = test_addr1_bits.vpn
+    test_addr2_vpn = test_addr2_bits.vpn
+
+    test_addr1_vpn_hex = hex(int(test_addr1_vpn, 2))
+    test_addr2_vpn_hex = hex(int(test_addr2_vpn, 2))
+    print(f"VPN1: {test_addr1_vpn_hex} VPN2: {test_addr2_vpn_hex}")
 
 
     memhier.cache_log.print()
-
 
 
 print("Cache.py loaded")

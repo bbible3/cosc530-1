@@ -71,7 +71,8 @@ class Address():
             tag = self.range(config.pt_tag_start, config.pt_tag_end)
             index = self.range(config.pt_index_start, config.pt_index_end)
             offset = self.range(config.pt_offset_start, config.pt_offset_end)
-            return Mapping(tag, index, offset)
+            vpn = self.range(config.dtlb_vpn_start, config.dtlb_vpn_end)
+            return Mapping(tag, index, offset, vpn=vpn)
         elif cache_type == CacheType.DCACHE:
             #Get the bits from the address
             tag = self.range(config.dcache_tag_start, config.dcache_tag_end)
