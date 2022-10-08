@@ -3,6 +3,43 @@ from config import Config
 from address import Address, Mapping
 from cachetype import CacheType
 
+class CacheLogType(str, Enum):
+    READ_HIT = "Read Hit"
+    READ_MISS = "Read Miss"
+    WRITE_HIT = "Write Hit"
+    WRITE_MISS = "Write Miss"
+class CacheLogAction(str, Enum):
+    ATTEMPT_READ = "Attempt Read"
+    CONTINUE_LOWER = "Continue to Lower Cache"
+class CacheLogItem():
+    def __init__(self, action=None, addr=None, response=None, cache_type=None, result=None):
+        self.addr = addr
+        self.response = response
+        self.cache_type = cache_type
+        self.block = None
+        self.log_type = None
+        self.result = result
+        self.action = action
+    def print(self, indents=0):
+        if self.action:
+            print(f"\t" * indents + f"Action: {self.action}")
+        print(f"\t" * indents + f"Address: {self.addr.addr_str}")
+        print(f"\t" * indents + f"Response: {self.response}")
+        print(f"\t" * indents + f"Cache Type: {self.cache_type}")
+        if self.result:
+            print(f"\t" * indents + f"Result: {self.result}")
+class CacheLog():
+    def __init__(self):
+        self.log = []
+    def add(self, item):
+        self.log.append(item)
+    def print(self):
+        i=0
+        for item in self.log:
+            print(f"Log Item {i}")
+            item.print(1)
+            i+=1
+            
 class Data():
     def __init__(self):
         self.tag = None
@@ -168,6 +205,7 @@ class MemHier():
 def TestCache():
     config = Config("trace.config")
     memhier = MemHier(config)
+    cache_log = CacheLog()
     # test_address = Address("0xc84")
     # test_response = test_address.get_bits(config, CacheType.DTLB)
     # test_address.print(indents=1)
@@ -179,26 +217,33 @@ def TestCache():
     #print(test_read)
 
     
-    # Try to add an address to the TLB manually
-    #Add a virtual address to the TLB to play pretend
-    addr = Address("0xc84") 
-    block = Block()
-    #Act as if we've gotten a pfn from the page table already
-    block.data.pfn = "0x2"
-    #Set the tag to the tag from the address manually
-    block.data.tag = addr.get_bits(config, CacheType.DTLB).tag
-    #Add the block to the TLB
-    response = memhier.mem_dtlb.save(addr, block)
-    print("Save response:", response)
+    # # Try to add an address to the TLB manually
+    # #Add a virtual address to the TLB to play pretend
+    # addr = Address("0xc84") 
+    # block = Block()
+    # #Act as if we've gotten a pfn from the page table already
+    # block.data.pfn = "0x2"
+    # #Set the tag to the tag from the address manually
+    # block.data.tag = addr.get_bits(config, CacheType.DTLB).tag
+    # #Add the block to the TLB
+    # response = memhier.mem_dtlb.save(addr, block)
+    # print("Save response:", response)
 
     
-    # Try to read the address from the TLB
+    # # Try to read the address from the TLB
     test_read = memhier.mem_dtlb.read("0xc84")
     print("Read response:", test_read)
+    if test_read == None:
+        log_address = Address("0xc84")
+        log_item = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, addr=log_address, cache_type=CacheType.DTLB, response=CacheLogType.READ_MISS, result=CacheLogAction.CONTINUE_LOWER)
+        cache_log.add(log_item)
+    # #Try to translate the address with the pfn we got from the TLB
+    # translated_addr = memhier.mem_dtlb.translate_addr(addr_to_translate=addr, pfn=test_read)
+    # print("Translated address:", translated_addr.addr_str)
 
-    #Try to translate the address with the pfn we got from the TLB
-    translated_addr = memhier.mem_dtlb.translate_addr(addr_to_translate=addr, pfn=test_read)
-    print("Translated address:", translated_addr.addr_str)
+    cache_log.print()
+
+
 
 print("Cache.py loaded")
 TestCache()
