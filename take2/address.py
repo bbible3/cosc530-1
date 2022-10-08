@@ -68,9 +68,9 @@ class Address():
             return Mapping(tag, index, offset, vpn=vpn)
         elif cache_type == CacheType.PAGE_TABLE:
             #Get the bits from the address
-            tag = self.range(config.page_table_tag_start, config.page_table_tag_end)
-            index = self.range(config.page_table_index_start, config.page_table_index_end)
-            offset = self.range(config.page_table_offset_start, config.page_table_offset_end)
+            tag = self.range(config.pt_tag_start, config.pt_tag_end)
+            index = self.range(config.pt_index_start, config.pt_index_end)
+            offset = self.range(config.pt_offset_start, config.pt_offset_end)
             return Mapping(tag, index, offset)
         elif cache_type == CacheType.DCACHE:
             #Get the bits from the address

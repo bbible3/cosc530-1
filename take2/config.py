@@ -218,6 +218,8 @@ class Config():
         self.l2_offset_start = self.l2_index_end
         self.l2_offset_end = self.l2_offset_start + self.l2_num_offset_bits
 
+        self.pt_num_entries = (2**self.addr_len)*self.pt_page_size
+
 
 
 

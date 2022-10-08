@@ -91,6 +91,14 @@ class Cache():
             self.num_sets = self.config.l2_num_sets
             self.set_size = self.config.l2_set_size
             self.sets = {}
+        elif self.cache_type == CacheType.PAGE_TABLE:
+            self.pt_num_entries = (2**self.config.addr_len)*self.config.pt_page_size
+
+            #Assume one set for page table
+            self.set_size = self.pt_num_entries
+            self.num_sets = 1
+            self.sets = {}
+            
 
     def add_get_set(self, index):
         
@@ -127,6 +135,21 @@ class Cache():
                         return block.data.pfn
                 return None
             return None
+        elif self.cache_type == CacheType.PAGE_TABLE:
+            #We should have one set, if not, except
+            if len(self.sets) > 1:
+                raise ValueError("Page table should have only one set")
+            elif len(self.sets) == 0:
+                #Setup the page table
+                self.sets[0] = Set(self.set_size)
+
+            #We should have one set at this point
+            for block in self.sets[0].blocks:
+                if block.data.vpn == addr_bits.vpn:
+                    return block.data.pfn
+            #We didn't find the block, return None
+            return None
+            
         else:
             #Is there a set at that index?
             if index in self.sets:
@@ -143,7 +166,10 @@ class Cache():
         #Get the mapping from addr
         mapping = addr.get_bits(self.config, self.cache_type)
 
-        which_set = self.add_get_set(mapping.index)
+        if self.cache_type == CacheType.PAGE_TABLE:
+            which_set = self.add_get_set(0)
+        else:
+            which_set = self.add_get_set(mapping.index)
         #Is there a set at that index?
         if which_set != None:
             response = which_set.add_block(block)
@@ -201,11 +227,43 @@ class MemHier():
         self.mem_dcache.child = self.mem_l2
         self.mem_l2.parent = self.mem_dcache
 
+        self.cache_log = CacheLog()
 
+    def read(self, read_addr_str):
+        #Ensure the address is a valid hex string
+        if not read_addr_str.startswith("0x"):
+            raise ValueError("Address must be a hex string")
+        #Create an Address object
+        read_addr = Address(read_addr_str)
+
+        #Are we using a TLB?
+        if self.config.use_tlb == True:
+            dtlb = self.mem_dtlb
+            #Try to read the address from the TLB
+            dtlb_read = dtlb.read(read_addr_str)
+            print("DTLB read: ", dtlb_read)
+            if dtlb_read is not None:
+                pass
+            else:
+                log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.DTLB, addr=read_addr, response=CacheLogType.READ_MISS, result=CacheLogAction.CONTINUE_LOWER)
+                self.cache_log.add(log_result)
+                #Pass to the child
+                page_table = dtlb.child
+                #Try to read the address from the page table
+                page_table_read = page_table.read(read_addr_str)
+                print("Page table read: ", page_table_read)
+                if page_table_read is not None:
+                    #Success! We found the address in the page table
+                    #We need to actually properly handle the read/write policy stuff here
+                    log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.READ_HIT, result=CacheLogAction.CONTINUE_LOWER)
+                    self.cache_log.add(log_result)
+                    pass
+                else:
+                    log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.READ_MISS, result=CacheLogAction.CONTINUE_LOWER)
+                    self.cache_log.add(log_result)
 def TestCache():
     config = Config("trace.config")
     memhier = MemHier(config)
-    cache_log = CacheLog()
     # test_address = Address("0xc84")
     # test_response = test_address.get_bits(config, CacheType.DTLB)
     # test_address.print(indents=1)
@@ -231,17 +289,21 @@ def TestCache():
 
     
     # # Try to read the address from the TLB
-    test_read = memhier.mem_dtlb.read("0xc84")
-    print("Read response:", test_read)
-    if test_read == None:
-        log_address = Address("0xc84")
-        log_item = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, addr=log_address, cache_type=CacheType.DTLB, response=CacheLogType.READ_MISS, result=CacheLogAction.CONTINUE_LOWER)
-        cache_log.add(log_item)
-    # #Try to translate the address with the pfn we got from the TLB
-    # translated_addr = memhier.mem_dtlb.translate_addr(addr_to_translate=addr, pfn=test_read)
-    # print("Translated address:", translated_addr.addr_str)
+    #Manually add an address to the Page Table
+    addr = Address("0xc84")
+    block = Block()
+    #Act as if we've gotten a pfn from the page table already
+    block.data.pfn = "0x2"
+    #Set the tag to the tag from the address manually
+    block.data.tag = addr.get_bits(config, CacheType.PAGE_TABLE).tag
+    #Add the block to the Page Table
+    response = memhier.mem_page_table.save(addr, block)
+    print("Manual Save response:", response)
 
-    cache_log.print()
+    test_read = memhier.read("0xc84")
+
+
+    memhier.cache_log.print()
 
 
 
