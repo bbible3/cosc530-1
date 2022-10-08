@@ -8,9 +8,14 @@ class CacheLogType(str, Enum):
     READ_MISS = "Read Miss"
     WRITE_HIT = "Write Hit"
     WRITE_MISS = "Write Miss"
+    CREATED_VPN_TO_PFN = "Created VPN to PFN mapping"
+    PT_FULL = "Page Table Full"
 class CacheLogAction(str, Enum):
     ATTEMPT_READ = "Attempt Read"
     CONTINUE_LOWER = "Continue to Lower Cache"
+    CREATE_VPN_TO_PFN = "Create VPN to PFN Mapping"
+    TRY_PT_AGAIN = "Try Page Table Again"
+    PT_EVICT = "Evict from Page Table"
 class CacheLogItem():
     def __init__(self, action=None, addr=None, response=None, cache_type=None, result=None):
         self.addr = addr
@@ -259,13 +264,53 @@ class MemHier():
                     self.cache_log.add(log_result)
                     #Translate the address
                     translated_addr = page_table.translate_addr(addr_to_translate=read_addr, pfn=page_table_read)
+                    #We should update the TLB with the new entry
                     return translated_addr
                 else:
                     #We didn't find the physical address in the page table. 
-                    #We need to translate the virtual address to a physical address
-                    
-                    log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.READ_MISS, result=CacheLogAction.CONTINUE_LOWER)
+                    #We need to arbitrarily choose a PFN and add it to the page table
+                    log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.READ_MISS, result=CacheLogAction.CREATE_VPN_TO_PFN)
                     self.cache_log.add(log_result)
+
+                    page_table_sets = page_table.sets
+                    page_table_set = page_table_sets[0]
+                    num_blocks_page_table = len(page_table_set.blocks)
+                    if num_blocks_page_table == 0:
+                        #No blocks in the set, so we must add one
+                        #Since this is the first block, we can arbitrarily choose a PFN of 0
+                        new_pfn = "0x0"
+                        cur_vpn = read_addr.get_bits(self.config, CacheType.PAGE_TABLE).vpn
+
+                        new_block = Block()
+                        new_block.data.tag = cur_vpn
+                        new_block.data.pfn = new_pfn
+                        page_table.save(read_addr, new_block)
+
+                        log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.CREATED_VPN_TO_PFN, result=CacheLogAction.TRY_PT_AGAIN)
+                        self.cache_log.add(log_result)
+                    elif num_blocks_page_table < self.config.pt_num_vpages:
+                        #What is the most recently allocated PFN?
+                        most_recent_pfn = page_table_set.blocks[-1].data.pfn
+                        #Treat the hex string of format 0x0 as an integer
+                        most_recent_pfn_int = int(most_recent_pfn, 16)
+                        #Increment the integer
+                        new_pfn_int = most_recent_pfn_int + 1
+                        #Convert the integer to a hex string
+                        new_pfn = str(hex(new_pfn_int))
+                        cur_vpn = read_addr.get_bits(self.config, CacheType.PAGE_TABLE).vpn
+
+                        new_block = Block()
+                        new_block.data.tag = cur_vpn
+                        new_block.data.pfn = new_pfn
+                        page_table.save(read_addr, new_block)
+
+                        log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.CREATED_VPN_TO_PFN, result=CacheLogAction.TRY_PT_AGAIN)
+                    else:
+                        log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.PAGE_TABLE_FULL, result=CacheLogAction.PT_EVICT)
+                        self.cache_log.add(log_result)
+                        #We need to evict a block from the page table
+
+                    
 def TestCache():
     config = Config("trace.config")
     memhier = MemHier(config)
@@ -295,34 +340,24 @@ def TestCache():
     
     # # Try to read the address from the TLB
     #Manually add an address to the Page Table
-    addr = Address("0xc84")
-    block = Block()
-    #Act as if we've gotten a pfn from the page table already
-    block.data.pfn = "0x2"
-    #Set the tag to the tag from the address manually
-    block.data.tag = addr.get_bits(config, CacheType.PAGE_TABLE).tag
-    #Add the block to the Page Table
-    response = memhier.mem_page_table.save(addr, block)
-    print("Manual Save response:", response)
+    # addr = Address("0xc84")
+    # block = Block()
+    # #Act as if we've gotten a pfn from the page table already
+    # block.data.pfn = "0x2"
+    # #Set the tag to the tag from the address manually
+    # block.data.tag = addr.get_bits(config, CacheType.PAGE_TABLE).tag
+    # #Add the block to the Page Table
+    # response = memhier.mem_page_table.save(addr, block)
+    # print("Manual Save response:", response)
 
-    test_read = memhier.read("0xc84")
-    test_read_2 = memhier.read("0xdead")
+    # test_read = memhier.read("0xc84")
+    # test_read_2 = memhier.read("0xdead")
 
-    test_addr1 = Address("0xc84")
-    test_addr2 = Address("0xdead")
-    
-    test_addr1_bits = test_addr1.get_bits(config, CacheType.DTLB)
-    test_addr2_bits = test_addr2.get_bits(config, CacheType.DTLB)
-
-    test_addr1_vpn = test_addr1_bits.vpn
-    test_addr2_vpn = test_addr2_bits.vpn
-
-    test_addr1_vpn_hex = hex(int(test_addr1_vpn, 2))
-    test_addr2_vpn_hex = hex(int(test_addr2_vpn, 2))
-    print(f"VPN1: {test_addr1_vpn_hex} VPN2: {test_addr2_vpn_hex}")
-
+    memhier.read("0xc84")
 
     memhier.cache_log.print()
+
+   
 
 
 print("Cache.py loaded")
