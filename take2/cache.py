@@ -164,7 +164,7 @@ class Cache():
             print("Looking in page table for vpn: " + str(addr_bits.vpn))
             #We should have one set at this point
             for block in self.sets[0].blocks:
-                if block.data.vpn == addr_bits.vpn:
+                if block.data.tag == addr_bits.vpn:
                     print("Found match with pfn: " + str(block.data.pfn))
                     return block.data.pfn
             #We didn't find the block, return None
@@ -272,7 +272,7 @@ class MemHier():
                 page_table = dtlb.child
                 #Try to read the address from the page table
                 page_table_read = page_table.read(read_addr_str)
-                print("Page table read: ", page_table_read)
+                print("Page table read: ", page_table_read, "given address: ", read_addr_str)
                 if page_table_read is not None:
                     #Success! We found the physical address in the page table
                     log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.READ_HIT, result=CacheLogAction.CONTINUE_LOWER)
@@ -293,19 +293,21 @@ class MemHier():
                     if num_blocks_page_table == 0:
                         #No blocks in the set, so we must add one
                         #Since this is the first block, we can arbitrarily choose a PFN of 0
+                        print("Setting up 0th PT PFN")
                         new_pfn = "0x0"
                         cur_vpn = read_addr.get_bits(self.config, CacheType.PAGE_TABLE).vpn
 
                         new_block = Block()
                         new_block.data.tag = cur_vpn
                         new_block.data.pfn = new_pfn
-                        page_table.save(read_addr, new_block)
+                        page_table_save = page_table.save(read_addr, new_block)
+    
 
                         log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.CREATED_VPN_TO_PFN, result=CacheLogAction.TRY_PT_AGAIN)
                         self.cache_log.add(log_result)
 
                         #Update TLB
-                        dtlb.save(read_addr, new_block)
+                        #dtlb.save(read_addr, new_block)
                         #Try the page table read again
                         page_table_read = page_table.read(read_addr_str)
                         print("New page table read: ", page_table_read)
