@@ -3,6 +3,85 @@ from config import Config
 from address import Address, Mapping
 from cachetype import CacheType
 
+class CacheResult():
+    def __init__(self, virtual_address_str=None, virtual_page_num_str=None, page_offset_str=None, tlb_tag_str=None, tlb_index_str=None, tlb_result_str=None, pt_result_str=None, pfn_str=None, dc_tag_str=None, dc_index_str=None, dc_result_str=None, l2_tag_str=None, l2_index_str=None, l2_result_str=None):
+        self.virtual_address_str = virtual_address_str
+        self.virtual_page_num_str = virtual_page_num_str
+        self.page_offset_str = page_offset_str
+        self.tlb_tag_str = tlb_tag_str
+        self.tlb_index_str = tlb_index_str
+        self.tlb_result_str = tlb_result_str
+        self.pt_result_str = pt_result_str
+        self.pfn_str = pfn_str
+        self.dc_tag_str = dc_tag_str
+        self.dc_index_str = dc_index_str
+        self.dc_result_str = dc_result_str
+        self.l2_tag_str = l2_tag_str
+        self.l2_index_str = l2_index_str
+        self.l2_result_str = l2_result_str
+
+    def output(self):
+        #"%08x %6x %4x %6x %3x %4s %4s %4x %6x %3x %4s %6x %3x %4s"
+
+        #output_str = "{va_str:08x} {vpn_str:6x} {po_str:4x} {tlb_tag_str:6x} {tlb_index_str:3x} {tlb_result_str:4s} {pt_result_str:4s} {pfn_str:4x} {dc_tag_str:6x} {dc_index_str:3x} {dc_result_str:4s} {l2_tag_str:6x} {l2_index_str:3x} {l2_result_str:4s}"
+        #formatted_str = output_str.format(va_str=self.virtual_address_str, vpn_str=self.virtual_page_num_str, po_str=self.page_offset_str, tlb_tag_str=self.tlb_tag_str, tlb_index_str=self.tlb_index_str, tlb_result_str=self.tlb_result_str, pt_result_str=self.pt_result_str, pfn_str=self.pfn_str, dc_tag_str=self.dc_tag_str, dc_index_str=self.dc_index_str, dc_result_str=self.dc_result_str, l2_tag_str=self.l2_tag_str, l2_index_str=self.l2_index_str, l2_result_str=self.l2_result_str)
+        formatted_str = ""
+
+        if self.virtual_address_str[:2] != "0x":
+            raise ValueError("virtual_address_str must be in hex format")
+    
+
+        #formatted_str += self.virtual_address_str[2:].zfill(8)
+        formatted_str = "{va_str:08x}".format(va_str=int(self.virtual_address_str, 16))
+        formatted_str += " "
+        formatted_str += "{vpn_str:6x}".format(vpn_str=int(self.virtual_page_num_str, 2))
+        formatted_str += " "
+        formatted_str += "{po_str:4x}".format(po_str=int(self.page_offset_str, 2))
+        formatted_str += " "
+        formatted_str += "{tlb_tag_str:6x}".format(tlb_tag_str=int(self.tlb_tag_str, 2))
+        formatted_str += " "
+        formatted_str += "{tlb_index_str:3x}".format(tlb_index_str=int(self.tlb_index_str, 2))
+        formatted_str += " "
+        formatted_str += "{tlb_result_str:4s}".format(tlb_result_str=self.tlb_result_str)
+        formatted_str += " "
+        formatted_str += "{pt_result_str:4s}".format(pt_result_str=self.pt_result_str)
+        formatted_str += " "
+        formatted_str += "{pfn_str:4x}".format(pfn_str=int(self.pfn_str, 16))
+        formatted_str += " "
+        formatted_str += "{dc_tag_str:6x}".format(dc_tag_str=int(self.dc_tag_str, 2))
+        formatted_str += " "
+        formatted_str += "{dc_index_str:3x}".format(dc_index_str=int(self.dc_index_str, 2))
+        formatted_str += " "
+        formatted_str += "{dc_result_str:4s}".format(dc_result_str=self.dc_result_str)
+        formatted_str += " "
+        formatted_str += "{l2_tag_str:6x}".format(l2_tag_str=int(self.l2_tag_str, 2))
+        formatted_str += " "
+        formatted_str += "{l2_index_str:3x}".format(l2_index_str=int(self.l2_index_str, 2))
+        formatted_str += " "
+        formatted_str += "{l2_result_str:4s}".format(l2_result_str=self.l2_result_str)
+
+        return formatted_str
+    def headers(self):
+
+        header_line_1 = ["Virtual", "Virt.", "Page", "TLB", "TLB", "TLB", "PT", "Phys", "", "DC", "DC", "", "L2", "L2"]
+        header_line_2 = ["Address", "Page #", "Off", "Tag", "Ind", "Res.", "Res.", "Pg #", "DC Tag", "Ind", "Res.", "L2 Tag", "Ind", "Res."]
+        widths = [8, 6, 4, 6, 3, 4, 4, 4, 6, 3, 4, 6, 3, 4]
+        
+        line_1_str = ""
+        line_2_str = ""
+        for i in range(len(header_line_1)):
+            line_1_str += header_line_1[i].ljust(widths[i])
+            line_1_str += " "
+            line_2_str += header_line_2[i].ljust(widths[i])
+            line_2_str += " "
+        print(line_1_str)
+        print(line_2_str)
+        bar_str = ""
+        for num in widths:
+            bar_str += "-" * num
+            bar_str += " "
+        print(bar_str)
+        return True
 class CacheLogType(str, Enum):
     READ_HIT = "Read Hit"
     READ_MISS = "Read Miss"
@@ -253,8 +332,10 @@ class MemHier():
         self.mem_l2.parent = self.mem_dcache
 
         self.cache_log = CacheLog()
-
+        self.cache_result = None
     def read(self, read_addr_str):
+        #Create a CacheResult to log
+        cache_result = CacheResult()
         print("Starting read of address: " + read_addr_str)
         #Ensure the address is a valid hex string
         if not read_addr_str.startswith("0x"):
@@ -280,7 +361,29 @@ class MemHier():
                 #Given this translated address, get the DC tag
                 dc_addr = translated_addr.get_bits(self.config, CacheType.DCACHE)
                 l2_addr = translated_addr.get_bits(self.config, CacheType.L2)
-               
+
+                
+                cache_result.virtual_address_str = read_addr_str
+                cache_result.virtual_page_num_str = read_addr.get_bits(self.config, CacheType.DTLB).vpn
+                cache_result.page_offset_str = read_addr.get_bits(self.config, CacheType.DTLB).offset
+                cache_result.tlb_tag_str = read_addr.get_bits(self.config, CacheType.DTLB).tag
+                cache_result.tlb_index_str = read_addr.get_bits(self.config, CacheType.DTLB).index
+                cache_result.tlb_result_str = "hit"
+                cache_result.pt_result_str = "idk"
+                cache_result.pfn_str = dtlb_read
+                cache_result.dc_tag_str = dc_addr.tag
+                cache_result.dc_index_str = dc_addr.index
+                cache_result.dc_result_str = "idk"
+                cache_result.l2_tag_str = l2_addr.tag
+                cache_result.l2_index_str = l2_addr.index
+                cache_result.l2_result_str = "idk"
+                self.cache_result = cache_result
+                #Pass this to recursive function for other levels!
+                #Essentially, say on a read we have a TLB miss followed by a PT miss,
+                #We want to keep the same cache result even if we have to recursively restart the memhier read
+                #So pass this object to the recursive function.
+                #We can do this to properly fill out the result_strs.
+                #Once that is done, it's mostly troubleshooting!
                 return translated_addr
                 
             else:
@@ -441,6 +544,10 @@ def TestCache():
     memhier.read("0xc84")
 
     memhier.cache_log.print()
+
+    cache_result = memhier.cache_result
+    cache_result.headers()
+    print(cache_result.output())
 
    
 
