@@ -12,6 +12,7 @@ class CacheLogType(str, Enum):
     PT_FULL = "Page Table Full"
     EVICT_SUCCESS = "Evict Success"
     EVICT_FAIL = "Evict Fail"
+    UPDATED_PT = "Updated Page Table"
     UPDATED_TLB = "Updated TLB"
 class CacheLogAction(str, Enum):
     ATTEMPT_READ = "Attempt Read"
@@ -20,6 +21,7 @@ class CacheLogAction(str, Enum):
     TRY_PT_AGAIN = "Try Page Table Again"
     PT_EVICT = "Evict from Page Table"
     RESTART_READ = "Restart Read"
+    SUCCESS = "Success"
 class CacheLogItem():
     def __init__(self, action=None, addr=None, response=None, cache_type=None, result=None):
         self.addr = addr
@@ -253,6 +255,7 @@ class MemHier():
         self.cache_log = CacheLog()
 
     def read(self, read_addr_str):
+        print("Starting read of address: " + read_addr_str)
         #Ensure the address is a valid hex string
         if not read_addr_str.startswith("0x"):
             raise ValueError("Address must be a hex string")
@@ -266,7 +269,15 @@ class MemHier():
             dtlb_read = dtlb.read(read_addr_str)
             print("DTLB read: ", dtlb_read)
             if dtlb_read is not None:
-                pass
+                print ("DTLB hit")
+                #We found the address in the TLB, translate the address
+                translated_addr = dtlb.translate_addr(addr_to_translate=read_addr, pfn=dtlb_read)
+                print("Translated address: " + str(translated_addr))
+
+                log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.DTLB, addr=read_addr, response=CacheLogType.READ_HIT, result=CacheLogAction.SUCCESS)
+                self.cache_log.add(log_result)
+                return translated_addr
+                
             else:
                 log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.DTLB, addr=read_addr, response=CacheLogType.READ_MISS, result=CacheLogAction.CONTINUE_LOWER)
                 self.cache_log.add(log_result)
@@ -306,7 +317,7 @@ class MemHier():
                         page_table_save = page_table.save(read_addr, new_block)
     
 
-                        log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.UPDATED_TLB, result=CacheLogAction.RESTART_READ)
+                        log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.UPDATED_PT, result=CacheLogAction.RESTART_READ)
                         self.cache_log.add(log_result)
 
                         #Update TLB
@@ -319,9 +330,11 @@ class MemHier():
                         dtlb_block.data.index = cur_index
                         dtlb.save(read_addr, dtlb_block)
 
-                        log_result = CacheLogItem
+                        log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.UPDATED_TLB, result=CacheLogAction.RESTART_READ)
+                        self.cache_log.add(log_result)
+
                         #Restart the read
-                        return self.read(read_addr_str)
+                        self.read(read_addr_str)
                         
 
                     elif num_blocks_page_table < self.config.pt_num_vpages:
@@ -343,11 +356,22 @@ class MemHier():
                         log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.CREATED_VPN_TO_PFN, result=CacheLogAction.TRY_PT_AGAIN)
                         self.cache_log.add(log_result)
 
+                        
                         #Update TLB
-                        dtlb.save(read_addr, new_block)
+                        cur_index = read_addr.get_bits(self.config, CacheType.DTLB).index
+                        cur_tag = read_addr.get_bits(self.config, CacheType.DTLB).tag
 
-                        #Try the page table read again
-                        page_table_read = page_table.read(read_addr_str)
+                        dtlb_block = Block()
+                        dtlb_block.data.tag = cur_tag
+                        dtlb_block.data.pfn = new_pfn
+                        dtlb_block.data.index = cur_index
+                        dtlb.save(read_addr, dtlb_block)
+                        log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.UPDATED_TLB, result=CacheLogAction.RESTART_READ)
+                        self.cache_log.add(log_result)
+
+                        #Restart the read
+                        self.read(read_addr_str)
+
 
                     else:
                         log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.PT_FULL, result=CacheLogAction.PT_EVICT)
@@ -364,12 +388,6 @@ class MemHier():
                             self.cache_log.add(log_result)
 
                             raise ValueError("Eviction failed")
-                if page_table_read is None:
-                    #For some reason the page_table_read is still None. Fault.
-                    raise ValueError("Page table read is still None")
-                print("Page table read: ", page_table_read)
-                        
-
 
 
                     
