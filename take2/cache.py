@@ -384,6 +384,8 @@ class MemHier():
                 #So pass this object to the recursive function.
                 #We can do this to properly fill out the result_strs.
                 #Once that is done, it's mostly troubleshooting!
+                #Also note that in the writeup PDF, TLB Res for that first read is a miss.
+                #Blank if it should be skipped. See Abram's message
                 return translated_addr
                 
             else:
