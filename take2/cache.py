@@ -276,6 +276,11 @@ class MemHier():
 
                 log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.DTLB, addr=read_addr, response=CacheLogType.READ_HIT, result=CacheLogAction.SUCCESS)
                 self.cache_log.add(log_result)
+
+                #Given this translated address, get the DC tag
+                dc_addr = translated_addr.get_bits(self.config, CacheType.DCACHE)
+                l2_addr = translated_addr.get_bits(self.config, CacheType.L2)
+               
                 return translated_addr
                 
             else:
