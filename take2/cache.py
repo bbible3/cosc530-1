@@ -12,12 +12,14 @@ class CacheLogType(str, Enum):
     PT_FULL = "Page Table Full"
     EVICT_SUCCESS = "Evict Success"
     EVICT_FAIL = "Evict Fail"
+    UPDATED_TLB = "Updated TLB"
 class CacheLogAction(str, Enum):
     ATTEMPT_READ = "Attempt Read"
     CONTINUE_LOWER = "Continue to Lower Cache"
     CREATE_VPN_TO_PFN = "Create VPN to PFN Mapping"
     TRY_PT_AGAIN = "Try Page Table Again"
     PT_EVICT = "Evict from Page Table"
+    RESTART_READ = "Restart Read"
 class CacheLogItem():
     def __init__(self, action=None, addr=None, response=None, cache_type=None, result=None):
         self.addr = addr
@@ -161,11 +163,11 @@ class Cache():
             elif len(self.sets) == 0:
                 #Setup the page table
                 self.sets[0] = Set(self.set_size)
-            print("Looking in page table for vpn: " + str(addr_bits.vpn))
+            #print("Looking in page table for vpn: " + str(addr_bits.vpn))
             #We should have one set at this point
             for block in self.sets[0].blocks:
                 if block.data.tag == addr_bits.vpn:
-                    print("Found match with pfn: " + str(block.data.pfn))
+                    #print("Found match with pfn: " + str(block.data.pfn))
                     return block.data.pfn
             #We didn't find the block, return None
             return None
@@ -293,25 +295,34 @@ class MemHier():
                     if num_blocks_page_table == 0:
                         #No blocks in the set, so we must add one
                         #Since this is the first block, we can arbitrarily choose a PFN of 0
-                        print("Setting up 0th PT PFN")
+
                         new_pfn = "0x0"
                         cur_vpn = read_addr.get_bits(self.config, CacheType.PAGE_TABLE).vpn
 
                         new_block = Block()
                         new_block.data.tag = cur_vpn
                         new_block.data.pfn = new_pfn
+                        
                         page_table_save = page_table.save(read_addr, new_block)
     
 
-                        log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.CREATED_VPN_TO_PFN, result=CacheLogAction.TRY_PT_AGAIN)
+                        log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.UPDATED_TLB, result=CacheLogAction.RESTART_READ)
                         self.cache_log.add(log_result)
 
                         #Update TLB
-                        #dtlb.save(read_addr, new_block)
-                        #Try the page table read again
-                        page_table_read = page_table.read(read_addr_str)
-                        print("New page table read: ", page_table_read)
-                        #Currently, this is showing up as None, why?
+                        cur_index = read_addr.get_bits(self.config, CacheType.DTLB).index
+                        cur_tag = read_addr.get_bits(self.config, CacheType.DTLB).tag
+
+                        dtlb_block = Block()
+                        dtlb_block.data.tag = cur_tag
+                        dtlb_block.data.pfn = new_pfn
+                        dtlb_block.data.index = cur_index
+                        dtlb.save(read_addr, dtlb_block)
+
+                        log_result = CacheLogItem
+                        #Restart the read
+                        return self.read(read_addr_str)
+                        
 
                     elif num_blocks_page_table < self.config.pt_num_vpages:
                         #What is the most recently allocated PFN?
