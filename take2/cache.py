@@ -392,23 +392,20 @@ class MemHier():
         dc_addr = translated_addr.get_bits(self.config, CacheType.DCACHE)
         l2_addr = translated_addr.get_bits(self.config, CacheType.L2)
 
-        
-        cache_result.virtual_address_str = read_addr_str
-        cache_result.virtual_page_num_str = read_addr.get_bits(self.config, CacheType.DTLB).vpn
-        cache_result.page_offset_str = read_addr.get_bits(self.config, CacheType.DTLB).offset
-        cache_result.tlb_tag_str = read_addr.get_bits(self.config, CacheType.DTLB).tag
-        cache_result.tlb_index_str = read_addr.get_bits(self.config, CacheType.DTLB).index
-        cache_result.tlb_result_str = "hit"
+        if cache_result.tlb_result_str != "hit":
+            cache_result.tlb_result_str = "miss"
         #if cache_result.pt_result_str is already "hit", let it remain. Otherwise, set it to "miss"
         if cache_result.pt_result_str != "hit":
             cache_result.pt_result_str = "miss"
+
+        #This is necessary to ensure that the cache_result is updated properly.
+        #A DTLB hit must occur for output to be proper.
+        #Maybe we can change this, but if DTLB is disabled maybe just hide output? lol
         cache_result.pfn_str = dtlb_read
         cache_result.dc_tag_str = dc_addr.tag
         cache_result.dc_index_str = dc_addr.index
-        cache_result.dc_result_str = "idk"
         cache_result.l2_tag_str = l2_addr.tag
         cache_result.l2_index_str = l2_addr.index
-        cache_result.l2_result_str = "idk"
         self.cache_result = cache_result
         #Pass this to recursive function for other levels!
         #Essentially, say on a read we have a TLB miss followed by a PT miss,
@@ -574,27 +571,68 @@ class MemHier():
             #Do we continue to L2 or just do nothing?
             #Do we just store it into cache? Or write-policy?
             self.cache_result.dc_result_str = "miss"
+            #Log the miss
+            log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.DCACHE, addr=read_addr, response=CacheLogType.READ_MISS, result=CacheLogAction.CONTINUE_LOWER)
+            self.cache_log.add(log_result)
+            return False
         else:
             #Read hit
             self.cache_result.dc_result_str = "hit"
+            #Log the hit
+            log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.DCACHE, addr=read_addr, response=CacheLogType.READ_HIT, result=CacheLogAction.SUCCESS)
+            self.cache_log.add(log_result)
             return dc_read
+    def read_sub_l2(self, read_addr_str=None, read_addr=None, cache_result=None):
+        if read_addr_str == None:
+            raise ValueError("read_addr_str cannot be None")
+        if read_addr == None:
+            raise ValueError("read_addr cannot be None")
+        if cache_result == None:
+            raise ValueError("cache_result cannot be None")
+        
+        #Attempt to read from L2
+        l2_read = self.mem_l2.read(read_addr_str)
+        if l2_read == None:
+            #Read miss
+            self.cache_result.l2_result_str = "miss"
+            #Log the miss
+            log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.L2, addr=read_addr, response=CacheLogType.READ_MISS, result=CacheLogAction.CONTINUE_LOWER)
+            self.cache_log.add(log_result)
+            return False
+        else:
+            #Read hit
+            self.cache_result.l2_result_str = "hit"
+            #Log the hit
+            log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.L2, addr=read_addr, response=CacheLogType.READ_HIT, result=CacheLogAction.SUCCESS)
+            self.cache_log.add(log_result)
+            return l2_read
     def read(self, read_addr_str):
-        #Create a CacheResult to log
-        cache_result = CacheResult()
         print("Starting read of address: " + read_addr_str)
         #Ensure the address is a valid hex string
         if not read_addr_str.startswith("0x"):
             raise ValueError("Address must be a hex string")
         #Create an Address object
         read_addr = Address(read_addr_str, is_virtual=True)
-
+        #Create a CacheResult to log
+        cache_result = CacheResult()
+        cache_result.virtual_address_str = read_addr_str
+        cache_result.virtual_page_num_str = read_addr.get_bits(self.config, CacheType.DTLB).vpn
+        cache_result.page_offset_str = read_addr.get_bits(self.config, CacheType.DTLB).offset
+        cache_result.tlb_tag_str = read_addr.get_bits(self.config, CacheType.DTLB).tag
+        cache_result.tlb_index_str = read_addr.get_bits(self.config, CacheType.DTLB).index
+        cache_result.tlb_result_str = "notset"
+        cache_result.pt_result_str = "notset"
+        
         #Are we using a TLB?
         if self.config.use_tlb:
             self.read_sub_tlb(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result)
         
         #Are we using DC? Always, yes
-        self.read_sub_dc(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result)
-
+        sub_dc_result = self.read_sub_dc(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result)
+        if sub_dc_result == False:
+            #Read miss
+            #Attempt to read from L2
+            self.read_sub_l2(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result)
                     
 def TestCache():
     config = Config("trace.config")
