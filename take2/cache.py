@@ -333,6 +333,251 @@ class MemHier():
 
         self.cache_log = CacheLog()
         self.cache_result = None
+    def read_sub_tlb(self, read_addr_str=None, read_addr=None, cache_result=None):
+        #To segment the code properly to make it easier to read, this contains the code previously under the branch
+        #if self.config.use_tlb == True.
+        #If any of the parameters are None, raise an error
+        if read_addr_str == None:
+            raise ValueError("read_addr_str must be provided")
+        if read_addr == None:
+            raise ValueError("read_addr must be provided")
+        if cache_result == None:
+            raise ValueError("cache_result must be provided")
+        if self.config.use_tlb == True:
+            dtlb = self.mem_dtlb
+            #Try to read the address from the TLB
+            dtlb_read = dtlb.read(read_addr_str)
+            print("DTLB read: ", dtlb_read)
+            if dtlb_read is not None:
+                translated_addr = self.read_sub_dtlb_hit(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result, dtlb=dtlb, dtlb_read=dtlb_read)
+                return translated_addr
+                
+            else:
+                log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.DTLB, addr=read_addr, response=CacheLogType.READ_MISS, result=CacheLogAction.CONTINUE_LOWER)
+                self.cache_log.add(log_result)
+                #Pass to the child
+                page_table = dtlb.child
+                #Try to read the address from the page table
+                page_table_read = page_table.read(read_addr_str)
+                #print("Page table read: ", page_table_read, "given address: ", read_addr_str)
+                if page_table_read is not None:
+                    translated_addr = self.read_sub_page_table_hit(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result, page_table=page_table, page_table_read=page_table_read)
+
+                    return translated_addr
+                else:
+                    self.read_sub_dtlb_miss(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result, dtlb=dtlb, page_table=page_table)
+                    
+
+    def read_sub_dtlb_hit(self, read_addr_str=None, read_addr=None, cache_result=None, dtlb=None, dtlb_read = None):
+        #If any of the parameters are None, except
+        if read_addr_str == None:
+            raise ValueError("read_addr_str cannot be None")
+        if read_addr == None:
+            raise ValueError("read_addr cannot be None")
+        if cache_result == None:
+            raise ValueError("cache_result cannot be None")
+        if dtlb == None:
+            raise ValueError("dtlb cannot be None")
+        if dtlb_read == None:
+            raise ValueError("read_sub_tlb tried to call dtlb_read, but dtlb_read was None")
+        print ("DTLB hit")
+        #We found the address in the TLB, translate the address
+        translated_addr = dtlb.translate_addr(addr_to_translate=read_addr, pfn=dtlb_read)
+        print("Translated address: " + str(translated_addr))
+
+        log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.DTLB, addr=read_addr, response=CacheLogType.READ_HIT, result=CacheLogAction.SUCCESS)
+        self.cache_log.add(log_result)
+
+        #Given this translated address, get the DC tag
+        dc_addr = translated_addr.get_bits(self.config, CacheType.DCACHE)
+        l2_addr = translated_addr.get_bits(self.config, CacheType.L2)
+
+        
+        cache_result.virtual_address_str = read_addr_str
+        cache_result.virtual_page_num_str = read_addr.get_bits(self.config, CacheType.DTLB).vpn
+        cache_result.page_offset_str = read_addr.get_bits(self.config, CacheType.DTLB).offset
+        cache_result.tlb_tag_str = read_addr.get_bits(self.config, CacheType.DTLB).tag
+        cache_result.tlb_index_str = read_addr.get_bits(self.config, CacheType.DTLB).index
+        cache_result.tlb_result_str = "hit"
+        #if cache_result.pt_result_str is already "hit", let it remain. Otherwise, set it to "miss"
+        if cache_result.pt_result_str != "hit":
+            cache_result.pt_result_str = "miss"
+        cache_result.pfn_str = dtlb_read
+        cache_result.dc_tag_str = dc_addr.tag
+        cache_result.dc_index_str = dc_addr.index
+        cache_result.dc_result_str = "idk"
+        cache_result.l2_tag_str = l2_addr.tag
+        cache_result.l2_index_str = l2_addr.index
+        cache_result.l2_result_str = "idk"
+        self.cache_result = cache_result
+        #Pass this to recursive function for other levels!
+        #Essentially, say on a read we have a TLB miss followed by a PT miss,
+        #We want to keep the same cache result even if we have to recursively restart the memhier read
+        #So pass this object to the recursive function.
+        #We can do this to properly fill out the result_strs.
+        #Once that is done, it's mostly troubleshooting!
+        #Also note that in the writeup PDF, TLB Res for that first read is a miss.
+        #Blank if it should be skipped. See Abram's message
+        return translated_addr      
+    def read_sub_dtlb_miss(self, read_addr_str=None, read_addr=None, cache_result=None, dtlb=None, dtlb_read = None, page_table=None):
+        if page_table == None:
+            raise ValueError("read_sub_tlb_miss tried to call page_table, but page_table was None")
+        #We didn't find the physical address in the page table. 
+        #We need to arbitrarily choose a PFN and add it to the page table
+        log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.READ_MISS, result=CacheLogAction.CREATE_VPN_TO_PFN)
+        self.cache_log.add(log_result)
+
+        self.read_sub_page_table_miss(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result, page_table=page_table, dtlb=dtlb)
+
+    def read_sub_page_table_miss(self, read_addr_str=None, read_addr=None, cache_result=None, page_table=None, dtlb=None):
+        if read_addr_str == None:
+            raise ValueError("read_addr_str cannot be None")
+        if read_addr == None:
+            raise ValueError("read_addr cannot be None")
+        if cache_result == None:
+            raise ValueError("cache_result cannot be None")
+        if page_table == None:
+            raise ValueError("page_table cannot be None")
+            
+        page_table_sets = page_table.sets
+        page_table_set = page_table_sets[0]
+        num_blocks_page_table = len(page_table_set.blocks)
+        if num_blocks_page_table == 0:
+            #No blocks in the set, so we must add one
+            #Since this is the first block, we can arbitrarily choose a PFN of 0
+
+            new_pfn = "0x0"
+            cur_vpn = read_addr.get_bits(self.config, CacheType.PAGE_TABLE).vpn
+
+            new_block = Block()
+            new_block.data.tag = cur_vpn
+            new_block.data.pfn = new_pfn
+            
+            page_table_save = page_table.save(read_addr, new_block)
+
+
+            log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.UPDATED_PT, result=CacheLogAction.RESTART_READ)
+            self.cache_log.add(log_result)
+
+            #Update TLB
+            cur_index = read_addr.get_bits(self.config, CacheType.DTLB).index
+            cur_tag = read_addr.get_bits(self.config, CacheType.DTLB).tag
+
+            dtlb_block = Block()
+            dtlb_block.data.tag = cur_tag
+            dtlb_block.data.pfn = new_pfn
+            dtlb_block.data.index = cur_index
+            dtlb.save(read_addr, dtlb_block)
+
+            log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.UPDATED_TLB, result=CacheLogAction.RESTART_READ)
+            self.cache_log.add(log_result)
+
+            #Set the cache result to miss for PT
+            cache_result.pt_result_str = "miss"
+            #Restart the read
+            self.read(read_addr_str)
+            
+
+        elif num_blocks_page_table < self.config.pt_num_vpages:
+            #What is the most recently allocated PFN?
+            most_recent_pfn = page_table_set.blocks[-1].data.pfn
+            #Treat the hex string of format 0x0 as an integer
+            most_recent_pfn_int = int(most_recent_pfn, 16)
+            #Increment the integer
+            new_pfn_int = most_recent_pfn_int + 1
+            #Convert the integer to a hex string
+            new_pfn = str(hex(new_pfn_int))
+            cur_vpn = read_addr.get_bits(self.config, CacheType.PAGE_TABLE).vpn
+
+            new_block = Block()
+            new_block.data.tag = cur_vpn
+            new_block.data.pfn = new_pfn
+
+            #This means the Page Table was a miss. Update the cache_result to "miss" to reflect this
+            cache_result.pt_result_str = "miss"
+            page_table.save(read_addr, new_block)
+
+            log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.CREATED_VPN_TO_PFN, result=CacheLogAction.TRY_PT_AGAIN)
+            self.cache_log.add(log_result)
+
+            
+            #Update TLB
+            cur_index = read_addr.get_bits(self.config, CacheType.DTLB).index
+            cur_tag = read_addr.get_bits(self.config, CacheType.DTLB).tag
+
+            dtlb_block = Block()
+            dtlb_block.data.tag = cur_tag
+            dtlb_block.data.pfn = new_pfn
+            dtlb_block.data.index = cur_index
+            dtlb.save(read_addr, dtlb_block)
+            log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.UPDATED_TLB, result=CacheLogAction.RESTART_READ)
+            self.cache_log.add(log_result)
+
+            #Restart the read
+            self.read(read_addr_str)
+
+
+        else:
+            log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.PT_FULL, result=CacheLogAction.PT_EVICT)
+            self.cache_log.add(log_result)
+            #We need to evict a block from the page table
+            eviction_result = page_table_set.evict()
+            if eviction_result == True:
+                #Eviction succeeded
+                log_result = CacheLogItem(action=CacheLogAction.PT_EVICT, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.EVICT_SUCCESS, result=CacheLogAction.TRY_PT_AGAIN)
+                self.cache_log.add(log_result)
+            else:
+                #Eviction failed
+                log_result = CacheLogItem(action=CacheLogAction.PT_EVICT, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.EVICT_FAIL, result=CacheLogAction.TRY_PT_AGAIN)
+                self.cache_log.add(log_result)
+
+                raise ValueError("Eviction failed")
+
+    def read_sub_page_table_hit(self, read_addr_str=None, read_addr=None, cache_result=None, page_table=None, dtlb=None, page_table_read=None):
+        if read_addr_str == None:
+            raise ValueError("read_addr_str cannot be None")
+        if read_addr == None:
+            raise ValueError("read_addr cannot be None")
+        if cache_result == None:
+            raise ValueError("cache_result cannot be None")
+        if page_table == None:
+            raise ValueError("page_table cannot be None")
+        if dtlb == None:
+            raise ValueError("dtlb cannot be None")
+        if page_table_read == None:
+            raise ValueError("page_table_read cannot be None")
+        
+        #Success! We found the physical address in the page table
+        log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.READ_HIT, result=CacheLogAction.CONTINUE_LOWER)
+        self.cache_log.add(log_result)
+        #Translate the address
+        translated_addr = page_table.translate_addr(addr_to_translate=read_addr, pfn=page_table_read)
+        #If PT_res is not already miss, update it to hit
+        if self.cache_result.pt_result_str != "miss":
+            self.cache_result.pt_result_str = "hit"
+        #We should update the TLB with the new entry
+        return translated_addr
+
+
+    def read_sub_dc(self, read_addr_str=None, read_addr=None, cache_result=None):
+        if read_addr_str == None:
+            raise ValueError("read_addr_str cannot be None")
+        if read_addr == None:
+            raise ValueError("read_addr cannot be None")
+        if cache_result == None:
+            raise ValueError("cache_result cannot be None")
+        
+        #Attempt to read from the data cache
+        dc_read = self.mem_dcache.read(read_addr_str)
+        if dc_read == None:
+            #Read miss
+            #Do we continue to L2 or just do nothing?
+            #Do we just store it into cache? Or write-policy?
+            self.cache_result.dc_result_str = "miss"
+        else:
+            #Read hit
+            self.cache_result.dc_result_str = "hit"
+            return dc_read
     def read(self, read_addr_str):
         #Create a CacheResult to log
         cache_result = CacheResult()
@@ -344,161 +589,11 @@ class MemHier():
         read_addr = Address(read_addr_str, is_virtual=True)
 
         #Are we using a TLB?
-        if self.config.use_tlb == True:
-            dtlb = self.mem_dtlb
-            #Try to read the address from the TLB
-            dtlb_read = dtlb.read(read_addr_str)
-            print("DTLB read: ", dtlb_read)
-            if dtlb_read is not None:
-                print ("DTLB hit")
-                #We found the address in the TLB, translate the address
-                translated_addr = dtlb.translate_addr(addr_to_translate=read_addr, pfn=dtlb_read)
-                print("Translated address: " + str(translated_addr))
-
-                log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.DTLB, addr=read_addr, response=CacheLogType.READ_HIT, result=CacheLogAction.SUCCESS)
-                self.cache_log.add(log_result)
-
-                #Given this translated address, get the DC tag
-                dc_addr = translated_addr.get_bits(self.config, CacheType.DCACHE)
-                l2_addr = translated_addr.get_bits(self.config, CacheType.L2)
-
-                
-                cache_result.virtual_address_str = read_addr_str
-                cache_result.virtual_page_num_str = read_addr.get_bits(self.config, CacheType.DTLB).vpn
-                cache_result.page_offset_str = read_addr.get_bits(self.config, CacheType.DTLB).offset
-                cache_result.tlb_tag_str = read_addr.get_bits(self.config, CacheType.DTLB).tag
-                cache_result.tlb_index_str = read_addr.get_bits(self.config, CacheType.DTLB).index
-                cache_result.tlb_result_str = "hit"
-                cache_result.pt_result_str = "idk"
-                cache_result.pfn_str = dtlb_read
-                cache_result.dc_tag_str = dc_addr.tag
-                cache_result.dc_index_str = dc_addr.index
-                cache_result.dc_result_str = "idk"
-                cache_result.l2_tag_str = l2_addr.tag
-                cache_result.l2_index_str = l2_addr.index
-                cache_result.l2_result_str = "idk"
-                self.cache_result = cache_result
-                #Pass this to recursive function for other levels!
-                #Essentially, say on a read we have a TLB miss followed by a PT miss,
-                #We want to keep the same cache result even if we have to recursively restart the memhier read
-                #So pass this object to the recursive function.
-                #We can do this to properly fill out the result_strs.
-                #Once that is done, it's mostly troubleshooting!
-                #Also note that in the writeup PDF, TLB Res for that first read is a miss.
-                #Blank if it should be skipped. See Abram's message
-                return translated_addr
-                
-            else:
-                log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.DTLB, addr=read_addr, response=CacheLogType.READ_MISS, result=CacheLogAction.CONTINUE_LOWER)
-                self.cache_log.add(log_result)
-                #Pass to the child
-                page_table = dtlb.child
-                #Try to read the address from the page table
-                page_table_read = page_table.read(read_addr_str)
-                print("Page table read: ", page_table_read, "given address: ", read_addr_str)
-                if page_table_read is not None:
-                    #Success! We found the physical address in the page table
-                    log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.READ_HIT, result=CacheLogAction.CONTINUE_LOWER)
-                    self.cache_log.add(log_result)
-                    #Translate the address
-                    translated_addr = page_table.translate_addr(addr_to_translate=read_addr, pfn=page_table_read)
-                    #We should update the TLB with the new entry
-                    return translated_addr
-                else:
-                    #We didn't find the physical address in the page table. 
-                    #We need to arbitrarily choose a PFN and add it to the page table
-                    log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.READ_MISS, result=CacheLogAction.CREATE_VPN_TO_PFN)
-                    self.cache_log.add(log_result)
-
-                    page_table_sets = page_table.sets
-                    page_table_set = page_table_sets[0]
-                    num_blocks_page_table = len(page_table_set.blocks)
-                    if num_blocks_page_table == 0:
-                        #No blocks in the set, so we must add one
-                        #Since this is the first block, we can arbitrarily choose a PFN of 0
-
-                        new_pfn = "0x0"
-                        cur_vpn = read_addr.get_bits(self.config, CacheType.PAGE_TABLE).vpn
-
-                        new_block = Block()
-                        new_block.data.tag = cur_vpn
-                        new_block.data.pfn = new_pfn
-                        
-                        page_table_save = page_table.save(read_addr, new_block)
-    
-
-                        log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.UPDATED_PT, result=CacheLogAction.RESTART_READ)
-                        self.cache_log.add(log_result)
-
-                        #Update TLB
-                        cur_index = read_addr.get_bits(self.config, CacheType.DTLB).index
-                        cur_tag = read_addr.get_bits(self.config, CacheType.DTLB).tag
-
-                        dtlb_block = Block()
-                        dtlb_block.data.tag = cur_tag
-                        dtlb_block.data.pfn = new_pfn
-                        dtlb_block.data.index = cur_index
-                        dtlb.save(read_addr, dtlb_block)
-
-                        log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.UPDATED_TLB, result=CacheLogAction.RESTART_READ)
-                        self.cache_log.add(log_result)
-
-                        #Restart the read
-                        self.read(read_addr_str)
-                        
-
-                    elif num_blocks_page_table < self.config.pt_num_vpages:
-                        #What is the most recently allocated PFN?
-                        most_recent_pfn = page_table_set.blocks[-1].data.pfn
-                        #Treat the hex string of format 0x0 as an integer
-                        most_recent_pfn_int = int(most_recent_pfn, 16)
-                        #Increment the integer
-                        new_pfn_int = most_recent_pfn_int + 1
-                        #Convert the integer to a hex string
-                        new_pfn = str(hex(new_pfn_int))
-                        cur_vpn = read_addr.get_bits(self.config, CacheType.PAGE_TABLE).vpn
-
-                        new_block = Block()
-                        new_block.data.tag = cur_vpn
-                        new_block.data.pfn = new_pfn
-                        page_table.save(read_addr, new_block)
-
-                        log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.CREATED_VPN_TO_PFN, result=CacheLogAction.TRY_PT_AGAIN)
-                        self.cache_log.add(log_result)
-
-                        
-                        #Update TLB
-                        cur_index = read_addr.get_bits(self.config, CacheType.DTLB).index
-                        cur_tag = read_addr.get_bits(self.config, CacheType.DTLB).tag
-
-                        dtlb_block = Block()
-                        dtlb_block.data.tag = cur_tag
-                        dtlb_block.data.pfn = new_pfn
-                        dtlb_block.data.index = cur_index
-                        dtlb.save(read_addr, dtlb_block)
-                        log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.UPDATED_TLB, result=CacheLogAction.RESTART_READ)
-                        self.cache_log.add(log_result)
-
-                        #Restart the read
-                        self.read(read_addr_str)
-
-
-                    else:
-                        log_result = CacheLogItem(action=CacheLogAction.CREATE_VPN_TO_PFN, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.PT_FULL, result=CacheLogAction.PT_EVICT)
-                        self.cache_log.add(log_result)
-                        #We need to evict a block from the page table
-                        eviction_result = page_table_set.evict()
-                        if eviction_result == True:
-                            #Eviction succeeded
-                            log_result = CacheLogItem(action=CacheLogAction.PT_EVICT, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.EVICT_SUCCESS, result=CacheLogAction.TRY_PT_AGAIN)
-                            self.cache_log.add(log_result)
-                        else:
-                            #Eviction failed
-                            log_result = CacheLogItem(action=CacheLogAction.PT_EVICT, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.EVICT_FAIL, result=CacheLogAction.TRY_PT_AGAIN)
-                            self.cache_log.add(log_result)
-
-                            raise ValueError("Eviction failed")
-
+        if self.config.use_tlb:
+            self.read_sub_tlb(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result)
+        
+        #Are we using DC? Always, yes
+        self.read_sub_dc(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result)
 
                     
 def TestCache():
