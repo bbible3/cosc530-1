@@ -30,7 +30,8 @@ class CacheResult():
         if self.virtual_address_str[:2] != "0x":
             raise ValueError("virtual_address_str must be in hex format")
     
-
+        if self.pt_result_str == "IGNORE":
+            self.pt_result_str = " "
         #formatted_str += self.virtual_address_str[2:].zfill(8)
         formatted_str = "{va_str:08x}".format(va_str=int(self.virtual_address_str, 16))
         formatted_str += " "
@@ -347,9 +348,13 @@ class MemHier():
             dtlb = self.mem_dtlb
             #Try to read the address from the TLB
             dtlb_read = dtlb.read(read_addr_str)
-            print("DTLB read: ", dtlb_read)
+            #print("DTLB read: ", dtlb_read)
             if dtlb_read is not None:
                 translated_addr = self.read_sub_dtlb_hit(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result, dtlb=dtlb, dtlb_read=dtlb_read)
+                if self.cache_result.tlb_result_str != "miss":
+                    self.cache_result.tlb_result_str = "hit"
+                    #If we have a TLB hit, we don't have to look at the PT.
+                    self.cache_result.pt_result_str = "IGNORE"
                 return translated_addr
                 
             else:
@@ -362,10 +367,13 @@ class MemHier():
                 #print("Page table read: ", page_table_read, "given address: ", read_addr_str)
                 if page_table_read is not None:
                     translated_addr = self.read_sub_page_table_hit(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result, page_table=page_table, page_table_read=page_table_read)
-
+                    self.cache_result.pt_result_str = "hit"
                     return translated_addr
                 else:
                     self.read_sub_dtlb_miss(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result, dtlb=dtlb, page_table=page_table)
+                    self.cache_result.pt_result_str = "miss"
+                    self.cache_result.tlb_result_str = "miss"
+
                     
 
     def read_sub_dtlb_hit(self, read_addr_str=None, read_addr=None, cache_result=None, dtlb=None, dtlb_read = None):
@@ -380,10 +388,10 @@ class MemHier():
             raise ValueError("dtlb cannot be None")
         if dtlb_read == None:
             raise ValueError("read_sub_tlb tried to call dtlb_read, but dtlb_read was None")
-        print ("DTLB hit")
+        #print ("DTLB hit")
         #We found the address in the TLB, translate the address
         translated_addr = dtlb.translate_addr(addr_to_translate=read_addr, pfn=dtlb_read)
-        print("Translated address: " + str(translated_addr))
+        #print("Translated address: " + str(translated_addr))
 
         log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.DTLB, addr=read_addr, response=CacheLogType.READ_HIT, result=CacheLogAction.SUCCESS)
         self.cache_log.add(log_result)
@@ -392,11 +400,6 @@ class MemHier():
         dc_addr = translated_addr.get_bits(self.config, CacheType.DCACHE)
         l2_addr = translated_addr.get_bits(self.config, CacheType.L2)
 
-        if cache_result.tlb_result_str != "hit":
-            cache_result.tlb_result_str = "miss"
-        #if cache_result.pt_result_str is already "hit", let it remain. Otherwise, set it to "miss"
-        if cache_result.pt_result_str != "hit":
-            cache_result.pt_result_str = "miss"
 
         #This is necessary to ensure that the cache_result is updated properly.
         #A DTLB hit must occur for output to be proper.
@@ -607,7 +610,7 @@ class MemHier():
             self.cache_log.add(log_result)
             return l2_read
     def read(self, read_addr_str):
-        print("Starting read of address: " + read_addr_str)
+        #print("Starting read of address: " + read_addr_str)
         #Ensure the address is a valid hex string
         if not read_addr_str.startswith("0x"):
             raise ValueError("Address must be a hex string")
@@ -676,6 +679,7 @@ def TestCache():
     # test_read = memhier.read("0xc84")
     # test_read_2 = memhier.read("0xdead")
 
+
     memhier.read("0xc84")
 
     memhier.cache_log.print()
@@ -683,7 +687,10 @@ def TestCache():
     cache_result = memhier.cache_result
     cache_result.headers()
     print(cache_result.output())
-
+    
+    memhier.read("0xc84")
+    cache_result = memhier.cache_result
+    print(cache_result.output())
    
 
 
