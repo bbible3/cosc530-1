@@ -258,7 +258,7 @@ class Cache():
             #Is there a set at that index?
             if index in self.sets:
                 for block in self.sets[index].blocks:
-                    if block.tag == addr_bits.tag:
+                    if block.data.tag == addr_bits.tag:
                         return block
                 return None
             else:
@@ -366,8 +366,9 @@ class MemHier():
                 page_table_read = page_table.read(read_addr_str)
                 #print("Page table read: ", page_table_read, "given address: ", read_addr_str)
                 if page_table_read is not None:
-                    translated_addr = self.read_sub_page_table_hit(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result, page_table=page_table, page_table_read=page_table_read)
+                    translated_addr = self.read_sub_page_table_hit(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result, page_table=page_table, page_table_read=page_table_read, dtlb=dtlb)
                     self.cache_result.pt_result_str = "hit"
+                    self.cache_result.pfn_str = page_table_read
                     return translated_addr
                 else:
                     self.read_sub_dtlb_miss(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result, dtlb=dtlb, page_table=page_table)
@@ -601,10 +602,23 @@ class MemHier():
             #Log the miss
             log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.L2, addr=read_addr, response=CacheLogType.READ_MISS, result=CacheLogAction.CONTINUE_LOWER)
             self.cache_log.add(log_result)
+
+            #Save to L2
+            #Get bits from read_addr
+            get_bits = read_addr.get_bits(self.config, CacheType.L2)
+            l2_block = Block()
+            l2_block.data.tag = get_bits.tag
+            l2_block.data.index = get_bits.index
+            l2_block.data.offset = get_bits.offset
+            l2_save = self.mem_l2.save(read_addr, l2_block)
+
+
             return False
         else:
             #Read hit
-            self.cache_result.l2_result_str = "hit"
+            #To avoid wrong long on restart
+            if self.cache_result.l2_result_str != "miss":
+                self.cache_result.l2_result_str = "hit"
             #Log the hit
             log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.L2, addr=read_addr, response=CacheLogType.READ_HIT, result=CacheLogAction.SUCCESS)
             self.cache_log.add(log_result)
@@ -625,7 +639,15 @@ class MemHier():
         cache_result.tlb_index_str = read_addr.get_bits(self.config, CacheType.DTLB).index
         cache_result.tlb_result_str = "notset"
         cache_result.pt_result_str = "notset"
-        
+        cache_result.pfn_str = "-1"
+        cache_result.dc_tag_str = "-1"
+        cache_result.dc_index_str = "-1"
+        cache_result.dc_result_str = "-1"
+        cache_result.l2_tag_str = "-1"
+        cache_result.l2_index_str = "-1"
+        cache_result.l2_result_str = "-1"
+        self.cache_result = cache_result
+
         #Are we using a TLB?
         if self.config.use_tlb:
             self.read_sub_tlb(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result)
@@ -682,13 +704,13 @@ def TestCache():
 
     memhier.read("0xc84")
 
-    memhier.cache_log.print()
+    #memhier.cache_log.print()
 
     cache_result = memhier.cache_result
     cache_result.headers()
     print(cache_result.output())
     
-    memhier.read("0xc84")
+    memhier.read("0x81c")
     cache_result = memhier.cache_result
     print(cache_result.output())
    
