@@ -180,6 +180,32 @@ class Set():
             return True
         else:
             return False
+    def add_update_evict(self, mapping, cache):
+        #Is the block already in the set?
+        for b in self.blocks:
+            if b.data.tag == mapping.tag:
+                #print("Block already in set")
+                cache.lru_update(b)
+                return True
+        
+        #No. Is the set full?
+        new_block = Block()
+        new_block.data.tag = mapping.tag
+        new_block.data.index = mapping.index
+        new_block.data.offset = mapping.offset
+        new_block.data.vpn = mapping.vpn
+        new_block.data.pfn = mapping.pfn
+
+        if len(self.blocks) < self.size:
+            #print("Adding block to set")
+            self.add_block(new_block, cache)
+            return True
+        else:
+            #print("Evicting block from set", mapping.index)
+            #print(f"Replacing block with new tag {mapping.tag}")
+            self.evict_block(cache)
+            self.add_block(new_block, cache)
+            return True
     
 
 class Cache():
@@ -223,7 +249,7 @@ class Cache():
         out_str = ""
         for set in self.sets.keys():
             for block in self.sets[set].blocks:
-                out_str += f"{block.data.tag} "
+                out_str += f"set{set} has {block.data.tag} "
         return out_str
     def lru_oldest(self):
         oldest = None
@@ -281,8 +307,12 @@ class Cache():
                 for block in self.sets[index].blocks:
                     if block.data.tag == addr_bits.tag:
                         self.lru_add_or_update(block)
-                        #We found the block, return the pfn
+                        #print("DTLB hit")
+
                         return block.data.pfn
+                oldest = self.lru_oldest()
+                self.sets[index].add_update_evict(addr_bits, self)
+                self.lru_add_or_update(oldest)
                 return None
             return None
         elif self.cache_type == CacheType.PAGE_TABLE:
@@ -318,6 +348,7 @@ class Cache():
             raise ValueError("Address must be of type Address")
         #Get the mapping from addr
         mapping = addr.get_bits(self.config, self.cache_type)
+        mapping.pfn = block.data.pfn
 
         if self.cache_type == CacheType.PAGE_TABLE:
             which_set = self.add_get_set(0)
@@ -330,32 +361,14 @@ class Cache():
                 #No, we want to use the 0th set
                 self.sets[0] = Set(self.set_size)
                 which_set = self.sets[0]
-            #Yes, there are some sets
-            elif len(self.sets) < self.num_sets:
-                for key in self.sets:
-                    this_set = self.sets[key]
-                    if type(this_set) != Set:
-                        continue
-                    #Is there room in the set?
-                    if len(this_set.blocks) < self.set_size:
-                        which_set = this_set
-                        break
-                #No existing set had room, but we can make a new one
-                if len(self.sets) < self.num_sets:
-                    n_sets = len(self.sets)
-                    self.sets[n_sets] = Set(self.set_size)
-                    which_set = self.sets[n_sets]
-            #All sets are full, we need to evict
             else:
-                for key in self.sets:
-                    #Sufficient room, no eviction needed
-                    if len(self.sets[key].blocks) < self.set_size:
-                        which_set = self.sets[key]
-                        break
-                    else:
-                        if self.sets[key].evict_block(self):
-                            which_set = self.sets[key]
-                            break
+                #Is there a set with the desired index?
+                if mapping.index in self.sets:
+                    #print("A set with this index exists")
+                    self.sets[mapping.index].add_update_evict(mapping, self)
+                else:
+                    print("A set with this index does not exist")
+                    pass
                     
         #Is there a set at that index?
         if which_set != None:
@@ -842,8 +855,8 @@ def TestCache():
     cache_result = memhier.cache_result
     print(cache_result.output())
     
-    print("tags currently in tlb")
-    print(memhier.mem_dtlb.tags_in_cache())
+    #print("tags currently in tlb")
+    #print(memhier.mem_dtlb.tags_in_cache())
     
     memhier.read("0x148")
     cache_result = memhier.cache_result

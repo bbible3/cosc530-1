@@ -2,12 +2,13 @@ from config import Config
 from cachetype import CacheType
 
 class Mapping():
-    def __init__(self, tag=None, index=None, offset=None, vpn=None, as_type=bin):
+    def __init__(self, tag=None, index=None, offset=None, vpn=None, as_type=bin, pfn=None):
         self.tag = tag
         self.index = index
         self.offset = offset
         self.vpn = vpn
         self.as_type = as_type
+        self.pfn = pfn
     def print(self, indents=0):
         if self.as_type == hex:
             tag_int = int(self.tag, 2)
