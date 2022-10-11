@@ -1,4 +1,5 @@
 from enum import Enum
+import time
 from config import Config
 from address import Address, Mapping
 from cachetype import CacheType
@@ -147,18 +148,34 @@ class Set():
     def __init__(self, size):
         self.size = size
         self.blocks = []
-    def add_block(self, block):
+    def add_block(self, block, cache):
         if len(self.blocks) < self.size:
+            cache.lru_add(block)
             self.blocks.append(block)
         else:
             return False
-    def evict_block(self):
+    def evict_block(self, cache):
         #Approximate LRU, make this better later
         #Just remove block at index 0
         num_blocks = len(self.blocks)
-        new_blocks = self.blocks[1:]
-        self.blocks = new_blocks
+        # new_blocks = self.blocks[1:]
+        # self.blocks = new_blocks
+        # num_blocks_new = len(self.blocks)
+        if len(self.blocks) < cache.config.dtlb_set_size:
+            #Eviction unnecessary
+            raise Exception("Eviction unnecessary")
+            return True
+        which_evict = cache.lru_oldest()
+        #print("Evicting block with tag: ", which_evict.data.tag)
+        for block in self.blocks:
+            #print("Checking block", block)
+            if block == which_evict:
+                #print("Found block to evict")
+                self.blocks.remove(block)
+                break
         num_blocks_new = len(self.blocks)
+        #cache.lru_remove(which_evict)
+        
         if num_blocks_new == num_blocks - 1:
             return True
         else:
@@ -174,6 +191,7 @@ class Cache():
         self.num_sets = None
         self.set_size = None
         self.sets = None
+        self.lru_holder = {}
 
         #If we don't receive a config, or it is not of type Config, raise an error
         if type(self.config) != Config:
@@ -201,7 +219,34 @@ class Cache():
             self.set_size = self.pt_num_entries
             self.num_sets = 1
             self.sets = {}
-            
+    def tags_in_cache(self):
+        out_str = ""
+        for set in self.sets.keys():
+            for block in self.sets[set].blocks:
+                out_str += f"{block.data.tag} "
+        return out_str
+    def lru_oldest(self):
+        oldest = None
+        oldest_time = None
+        for key, value in self.lru_holder.items():
+            if oldest_time == None:
+                oldest_time = value
+                oldest = key
+            elif value < oldest_time:
+                oldest_time = value
+                oldest = key
+        return oldest
+    def lru_add(self, item):
+        self.lru_holder[item] = time.time()
+    def lru_remove(self, item):
+        del self.lru_holder[item]
+    def lru_update(self, item):
+        self.lru_holder[item] = time.time()
+    def lru_add_or_update(self, item):
+        if item in self.lru_holder:
+            self.lru_update(item)
+        else:
+            self.lru_add(item)
 
     def add_get_set(self, index):
         
@@ -229,11 +274,13 @@ class Cache():
 
         #Are we in TLB mode?
         if self.cache_type == CacheType.DTLB:
+            #print("DTLB read for tag: ", addr_bits.tag)
             #Does a set with this index exist?
             if index in self.sets:
                 #Does a block with this tag exist?
                 for block in self.sets[index].blocks:
                     if block.data.tag == addr_bits.tag:
+                        self.lru_add_or_update(block)
                         #We found the block, return the pfn
                         return block.data.pfn
                 return None
@@ -249,6 +296,7 @@ class Cache():
             #We should have one set at this point
             for block in self.sets[0].blocks:
                 if block.data.tag == addr_bits.vpn:
+                    self.lru_add_or_update(block)
                     #print("Found match with pfn: " + str(block.data.pfn))
                     return block.data.pfn
             #We didn't find the block, return None
@@ -259,6 +307,7 @@ class Cache():
             if index in self.sets:
                 for block in self.sets[index].blocks:
                     if block.data.tag == addr_bits.tag:
+                        self.lru_add_or_update(block)
                         return block
                 return None
             else:
@@ -282,7 +331,7 @@ class Cache():
                 self.sets[0] = Set(self.set_size)
                 which_set = self.sets[0]
             #Yes, there are some sets
-            elif len(self.sets) <= self.num_sets:
+            elif len(self.sets) < self.num_sets:
                 for key in self.sets:
                     this_set = self.sets[key]
                     if type(this_set) != Set:
@@ -296,15 +345,22 @@ class Cache():
                     n_sets = len(self.sets)
                     self.sets[n_sets] = Set(self.set_size)
                     which_set = self.sets[n_sets]
-                else:
-                    for key in self.sets:
-                        if self.sets[key].evict_block():
+            #All sets are full, we need to evict
+            else:
+                for key in self.sets:
+                    #Sufficient room, no eviction needed
+                    if len(self.sets[key].blocks) < self.set_size:
+                        which_set = self.sets[key]
+                        break
+                    else:
+                        if self.sets[key].evict_block(self):
                             which_set = self.sets[key]
                             break
                     
         #Is there a set at that index?
         if which_set != None:
-            response = which_set.add_block(block)
+            response = which_set.add_block(block, self)
+            self.lru_add(block)
             if response == False:
                 #Need to evict
                 return False
@@ -600,6 +656,13 @@ class MemHier():
         cur_index = read_addr.get_bits(self.config, CacheType.DTLB).index
         cur_tag = read_addr.get_bits(self.config, CacheType.DTLB).tag
 
+        #Is there a block with this tag already in the TLB?
+        for set in dtlb.sets.keys():
+            for block in dtlb.sets[set].blocks:
+                if block.data.tag == cur_tag:
+                    #print("We do not need to add this to the TLB")
+                    return translated_addr
+        #No, we need to add a new block to the TLB
         dtlb_block = Block()
         dtlb_block.data.tag = cur_tag
         dtlb_block.data.pfn = page_table_read
@@ -762,7 +825,7 @@ def TestCache():
     cache_result = memhier.cache_result
     cache_result.headers()
     print(cache_result.output())
-    
+
     memhier.read("0x81c")
     cache_result = memhier.cache_result
     print(cache_result.output())
@@ -778,7 +841,10 @@ def TestCache():
     memhier.read("0x400")
     cache_result = memhier.cache_result
     print(cache_result.output())
-
+    
+    print("tags currently in tlb")
+    print(memhier.mem_dtlb.tags_in_cache())
+    
     memhier.read("0x148")
     cache_result = memhier.cache_result
     print(cache_result.output())
