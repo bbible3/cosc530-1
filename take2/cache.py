@@ -33,6 +33,8 @@ class CacheResult():
     
         if self.pt_result_str == "IGNORE":
             self.pt_result_str = " "
+        if self.l2_result_str == "-1":
+            self.l2_result_str = "miss"
         #formatted_str += self.virtual_address_str[2:].zfill(8)
         formatted_str = "{va_str:08x}".format(va_str=int(self.virtual_address_str, 16))
         formatted_str += " "
@@ -297,7 +299,7 @@ class Cache():
         addr_bits = read_addr.get_bits(self.config, self.cache_type)
         #What is the index?
         index = addr_bits.index
-
+        
         #Are we in TLB mode?
         if self.cache_type == CacheType.DTLB:
             #print("DTLB read for tag: ", addr_bits.tag)
@@ -331,7 +333,6 @@ class Cache():
                     return block.data.pfn
             #We didn't find the block, return None
             return None
-            
         else:
             #Is there a set at that index?
             if index in self.sets:
@@ -369,6 +370,18 @@ class Cache():
                 else:
                     print("A set with this index does not exist")
                     pass
+        if self.cache_type == CacheType.DCACHE or self.cache_type == CacheType.L2:
+            #print("Trying to save with PFN: " + str(mapping.pfn))
+            if len(self.sets) == 0:
+                self.sets[mapping.pfn] = Set(self.set_size)
+                which_set = self.sets[mapping.pfn]
+            else:
+                if mapping.pfn in self.sets:
+                    self.sets[mapping.pfn].add_update_evict(mapping, self)
+                else:
+                    #Add a new set
+                    self.sets[mapping.pfn] = Set(self.set_size)
+                    which_set = self.sets[mapping.pfn]
                     
         #Is there a set at that index?
         if which_set != None:
@@ -431,6 +444,7 @@ class MemHier():
 
         self.cache_log = CacheLog()
         self.cache_result = None
+        self.lasttranslated = None
     def read_sub_tlb(self, read_addr_str=None, read_addr=None, cache_result=None):
         #To segment the code properly to make it easier to read, this contains the code previously under the branch
         #if self.config.use_tlb == True.
@@ -448,6 +462,7 @@ class MemHier():
             #print("DTLB read: ", dtlb_read)
             if dtlb_read is not None:
                 translated_addr = self.read_sub_dtlb_hit(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result, dtlb=dtlb, dtlb_read=dtlb_read)
+                self.lasttranslated = translated_addr
                 if self.cache_result.tlb_result_str != "miss":
                     self.cache_result.tlb_result_str = "hit"
                     #If we have a TLB hit, we don't have to look at the PT.
@@ -685,13 +700,14 @@ class MemHier():
         return translated_addr
 
 
-    def read_sub_dc(self, read_addr_str=None, read_addr=None, cache_result=None):
+    def read_sub_dc(self, read_addr_str=None, read_addr=None, cache_result=None, pfn=None, translated_addr=None):
         if read_addr_str == None:
             raise ValueError("read_addr_str cannot be None")
         if read_addr == None:
             raise ValueError("read_addr cannot be None")
         if cache_result == None:
             raise ValueError("cache_result cannot be None")
+
         
         #Attempt to read from the data cache
         dc_read = self.mem_dcache.read(read_addr_str)
@@ -703,6 +719,13 @@ class MemHier():
             #Log the miss
             log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.DCACHE, addr=read_addr, response=CacheLogType.READ_MISS, result=CacheLogAction.CONTINUE_LOWER)
             self.cache_log.add(log_result)
+            #Save to DC
+            get_bits = read_addr.get_bits(self.config, CacheType.L2)
+            dc_block = Block()
+            dc_block.data.tag = get_bits.tag
+            dc_block.data.index = get_bits.index
+            dc_block.data.offset = get_bits.offset
+            dc_save = self.mem_dcache.save(read_addr, dc_block)
             return False
         else:
             #Read hit
@@ -780,56 +803,21 @@ class MemHier():
             #If after the call cache_result.tlb_result_str is still notset, then we set it to miss
             if cache_result.tlb_result_str == "notset":
                 cache_result.tlb_result_str = "miss"
+            if cache_result.pfn_str and cache_result.pfn_str != "-1":
+                translated_addr = self.mem_dcache.translate_addr(read_addr, cache_result.pfn_str)
+                #sub_dc_result = self.read_sub_dc(read_addr_str=translated_addr.addr_str, read_addr=translated_addr, cache_result=cache_result, pfn=cache_result.pfn_str)
         
         #Are we using DC? Always, yes
         sub_dc_result = self.read_sub_dc(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result)
-        if sub_dc_result == False:
+        #if sub_dc_result == False:
             #Read miss
             #Attempt to read from L2
-            self.read_sub_l2(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result)
+        self.read_sub_l2(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result)
                     
 def TestCache():
     config = Config("trace.config")
     memhier = MemHier(config)
-    # test_address = Address("0xc84")
-    # test_response = test_address.get_bits(config, CacheType.DTLB)
-    # test_address.print(indents=1)
-    # test_response.print(indents=1)
-    # test_response.as_type = hex
-    # test_response.print(indents=1)
-    
-    #test_read = memhier.mem_dtlb.read("0xc84")
-    #print(test_read)
-
-    
-    # # Try to add an address to the TLB manually
-    # #Add a virtual address to the TLB to play pretend
-    # addr = Address("0xc84") 
-    # block = Block()
-    # #Act as if we've gotten a pfn from the page table already
-    # block.data.pfn = "0x2"
-    # #Set the tag to the tag from the address manually
-    # block.data.tag = addr.get_bits(config, CacheType.DTLB).tag
-    # #Add the block to the TLB
-    # response = memhier.mem_dtlb.save(addr, block)
-    # print("Save response:", response)
-
-    
-    # # Try to read the address from the TLB
-    #Manually add an address to the Page Table
-    # addr = Address("0xc84")
-    # block = Block()
-    # #Act as if we've gotten a pfn from the page table already
-    # block.data.pfn = "0x2"
-    # #Set the tag to the tag from the address manually
-    # block.data.tag = addr.get_bits(config, CacheType.PAGE_TABLE).tag
-    # #Add the block to the Page Table
-    # response = memhier.mem_page_table.save(addr, block)
-    # print("Manual Save response:", response)
-
-    # test_read = memhier.read("0xc84")
-    # test_read_2 = memhier.read("0xdead")
-
+    config.output()
 
     memhier.read("0xc84")
 
@@ -862,6 +850,13 @@ def TestCache():
     cache_result = memhier.cache_result
     print(cache_result.output())
 
+    #print("Dcache contains:")
+    #print(memhier.mem_dcache.tags_in_cache())
 
-print("Cache.py loaded")
+    memhier.read("0x144")
+    cache_result = memhier.cache_result
+    print(cache_result.output())
+
+
+#print("Cache.py loaded")
 TestCache()
