@@ -274,6 +274,34 @@ class Cache():
             which_set = self.add_get_set(0)
         else:
             which_set = self.add_get_set(mapping.index)
+        
+        if self.cache_type == CacheType.DTLB:
+            #Are there any sets?
+            if len(self.sets) == 0:
+                #No, we want to use the 0th set
+                self.sets[0] = Set(self.set_size)
+                which_set = self.sets[0]
+            #Yes, there are some sets
+            elif len(self.sets) <= self.num_sets:
+                for key in self.sets:
+                    this_set = self.sets[key]
+                    if type(this_set) != Set:
+                        continue
+                    #Is there room in the set?
+                    if len(this_set.blocks) < self.set_size:
+                        which_set = this_set
+                        break
+                #No existing set had room, but we can make a new one
+                if len(self.sets) < self.num_sets:
+                    n_sets = len(self.sets)
+                    self.sets[n_sets] = Set(self.set_size)
+                    which_set = self.sets[n_sets]
+                else:
+                    for key in self.sets:
+                        if self.sets[key].evict_block():
+                            which_set = self.sets[key]
+                            break
+                    
         #Is there a set at that index?
         if which_set != None:
             response = which_set.add_block(block)
@@ -355,8 +383,7 @@ class MemHier():
                     self.cache_result.tlb_result_str = "hit"
                     #If we have a TLB hit, we don't have to look at the PT.
                     self.cache_result.pt_result_str = "IGNORE"
-                return translated_addr
-                
+                return translated_addr                
             else:
                 log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.DTLB, addr=read_addr, response=CacheLogType.READ_MISS, result=CacheLogAction.CONTINUE_LOWER)
                 self.cache_log.add(log_result)
@@ -374,6 +401,8 @@ class MemHier():
                     self.read_sub_dtlb_miss(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result, dtlb=dtlb, page_table=page_table)
                     self.cache_result.pt_result_str = "miss"
                     self.cache_result.tlb_result_str = "miss"
+                
+
 
                     
 
@@ -568,6 +597,15 @@ class MemHier():
             self.cache_result.l2_index_str = translated_addr.get_bits(self.config, CacheType.L2).index
         
         #We should update the TLB with the new entry
+        cur_index = read_addr.get_bits(self.config, CacheType.DTLB).index
+        cur_tag = read_addr.get_bits(self.config, CacheType.DTLB).tag
+
+        dtlb_block = Block()
+        dtlb_block.data.tag = cur_tag
+        dtlb_block.data.pfn = page_table_read
+        dtlb_block.data.index = cur_index
+        dtlb.save(read_addr, dtlb_block)
+
         return translated_addr
 
 
@@ -635,6 +673,7 @@ class MemHier():
             self.cache_log.add(log_result)
             return l2_read
     def read(self, read_addr_str):
+        #print("Using TLB for read", read_addr_str)
         #print("Starting read of address: " + read_addr_str)
         #Ensure the address is a valid hex string
         if not read_addr_str.startswith("0x"):
@@ -662,6 +701,9 @@ class MemHier():
         #Are we using a TLB?
         if self.config.use_tlb:
             self.read_sub_tlb(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result)
+            #If after the call cache_result.tlb_result_str is still notset, then we set it to miss
+            if cache_result.tlb_result_str == "notset":
+                cache_result.tlb_result_str = "miss"
         
         #Are we using DC? Always, yes
         sub_dc_result = self.read_sub_dc(read_addr_str=read_addr_str, read_addr=read_addr, cache_result=cache_result)
@@ -724,7 +766,22 @@ def TestCache():
     memhier.read("0x81c")
     cache_result = memhier.cache_result
     print(cache_result.output())
-   
+
+    memhier.read("0x14c")
+    cache_result = memhier.cache_result
+    print(cache_result.output())
+
+    memhier.read("0xc84")
+    cache_result = memhier.cache_result
+    print(cache_result.output())
+
+    memhier.read("0x400")
+    cache_result = memhier.cache_result
+    print(cache_result.output())
+
+    memhier.read("0x148")
+    cache_result = memhier.cache_result
+    print(cache_result.output())
 
 
 print("Cache.py loaded")
