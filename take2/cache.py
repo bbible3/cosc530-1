@@ -423,6 +423,7 @@ class MemHier():
     def read_sub_dtlb_miss(self, read_addr_str=None, read_addr=None, cache_result=None, dtlb=None, dtlb_read = None, page_table=None):
         if page_table == None:
             raise ValueError("read_sub_tlb_miss tried to call page_table, but page_table was None")
+        
         #We didn't find the physical address in the page table. 
         #We need to arbitrarily choose a PFN and add it to the page table
         log_result = CacheLogItem(action=CacheLogAction.ATTEMPT_READ, cache_type=CacheType.PAGE_TABLE, addr=read_addr, response=CacheLogType.READ_MISS, result=CacheLogAction.CREATE_VPN_TO_PFN)
@@ -556,6 +557,16 @@ class MemHier():
         #If PT_res is not already miss, update it to hit
         if self.cache_result.pt_result_str != "miss":
             self.cache_result.pt_result_str = "hit"
+        #If dc_tag is not already set, update it
+        if self.cache_result.dc_tag_str == "-1":
+            self.cache_result.dc_tag_str = translated_addr.get_bits(self.config, CacheType.DCACHE).tag
+        if self.cache_result.dc_index_str == "-1":
+            self.cache_result.dc_index_str = translated_addr.get_bits(self.config, CacheType.DCACHE).index
+        if self.cache_result.l2_tag_str == "-1":
+            self.cache_result.l2_tag_str = translated_addr.get_bits(self.config, CacheType.L2).tag
+        if self.cache_result.l2_index_str == "-1":
+            self.cache_result.l2_index_str = translated_addr.get_bits(self.config, CacheType.L2).index
+        
         #We should update the TLB with the new entry
         return translated_addr
 
